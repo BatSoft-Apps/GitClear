@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GitClear.App/GitClear.App.csproj" />
+    <Project Path="src/GitClear.Core/GitClear.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GitClear.App.Tests/GitClear.App.Tests.csproj" />
+    <Project Path="tests/GitClear.Core.Tests/GitClear.Core.Tests.csproj" />
+  </Folder>
+</Solution>

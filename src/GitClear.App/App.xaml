@@ -1,0 +1,9 @@
+<Application x:Class="GitClear.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:GitClear.App">
+    <!-- No StartupUri: the main window is resolved from the DI container in
+         App.OnStartup so its dependencies (view models, services) are injected. -->
+    <Application.Resources>
+    </Application.Resources>
+</Application>

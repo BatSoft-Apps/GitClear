@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- UI-free domain + services library. Shared settings (TFM, nullable,
+       warnings-as-errors) come from ..\..\Directory.Build.props. Targets
+       net10.0-windows because the Recycle-Bin deletion service (DEL-1) uses
+       Windows shell APIs. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>
