@@ -9,8 +9,9 @@ from a selected repository.
 - **[leaning]** — my recommendation, awaiting user sign-off. Not yet binding.
 - **[open]** — undecided; see **Open decisions**.
 
-Reading order: this overview → **Open decisions** → **Backlog**. Split into a
-`design/` folder once any one area outgrows a screen.
+Reading order: this overview → **Open decisions** → **Backlog**. All design
+documents live in `Specifications/`; split this file into further documents there
+once any one area outgrows a screen.
 
 ---
 
@@ -69,7 +70,10 @@ Microsoft.Extensions.DependencyInjection. The app builds a container in
 last-resort `DispatcherUnhandledException` handler; Core exposes one
 registration entry point, `AddGitClearCore()`. Shared build settings live in
 `Directory.Build.props` (nullable, warnings-as-errors). Core logic is tested
-against real git/filesystem; the app view models are tested with fakes.
+against real git/filesystem; the app view models are tested with fakes. The
+Recycle-Bin tests deliberately **recycle then restore** a throwaway temp file and
+folder — this exercises the real shell interop in both directions while leaving no
+residue in the user's Recycle Bin on every test run.
 ```
 GitClear.slnx
 ├─ src/GitClear.Core/   Discovery/ · Scanning/ · Git/ · Deletion/ · Model/ · DependencyInjection/
@@ -125,7 +129,16 @@ are tallied as `UnreadableFileCount`.
 
 **SCAN-3** Scans run on a background thread with progress reporting and
 cancellation; the UI stays responsive. Sizing a large tree (e.g. a big
-`node_modules`) is the dominant cost.
+`node_modules`) is the dominant cost. The scanner exposes `IProgress<ScanProgress>`
+(a running file count; the total is unknowable up front because directories are
+collapsed), but **the view model deliberately does not route progress into the
+status line**.
+*Why:* `Progress<T>` delivers callbacks asynchronously, so a late progress
+callback can overwrite a status set after it — observed as a genuinely flaky test
+and, in the app, would have left the status stuck on "Scanning…" after an
+operation finished. Guarding the callback with a "is this still the active scan"
+check was rejected: a callback can still land inside the window before the guard
+clears. The indeterminate busy bar (UI-4) signals activity instead.
 
 ---
 
@@ -134,7 +147,9 @@ cancellation; the UI stays responsive. Sizing a large tree (e.g. a big
 **UI-1** Three-pane File-Explorer layout: **repository list** (left), **folder
 tree** (middle) showing aggregate ignored size per folder, and **file list**
 (right) showing per-file size for the selected folder. A wholly-ignored
-directory (SCAN-2) shows as a single marked node.
+directory (SCAN-2) shows as a single marked node. When a repo has **no** ignored
+files the tree is left **empty** rather than showing a bare root node — there is
+nothing to browse or delete, and the status line says so.
 
 **UI-2** Tri-state checkboxes select folders (cascading to all descendants) and
 individual files. Checking a folder selects everything ignored beneath it. A
@@ -145,7 +160,13 @@ directory (its entire size / file count) as one delete unit.
 
 **UI-4** A unified **Stop** button cancels whatever is running (discovery, scan,
 or deletion). An **Undo last delete** button is present (DEL-4). A single
-indeterminate busy bar signals any long-running operation.
+indeterminate busy bar signals any long-running operation; when idle it is
+`Hidden`, **not** `Collapsed`, so its row keeps its height and the controls below
+never jump.
+*Why:* WPF's built-in `BooleanToVisibilityConverter` only yields `Collapsed`
+(which removes the element from layout and shifts everything under it), so the
+bar uses a style trigger instead. The converter is still used for markers that
+never toggle at runtime.
 
 ---
 
@@ -155,9 +176,8 @@ indeterminate busy bar signals any long-running operation.
 `SHFileOperation` with `FOF_ALLOWUNDO` (+ no-UI flags), batched per shell
 operation (chunked for very large selections). Targets are:
 - each **individually-checked file**, and
-- each **checked wholly-ignored directory as a single unit** (SCAN-1 guarantees
-  it holds no tracked files, so deleting the directory is safe *and* avoids
-  recycling thousands of files one by one).
+- each **checked wholly-ignored directory as a single unit** — safe because
+  SCAN-1 guarantees such a directory holds no tracked files.
 
 A folder is **never** deleted wholesale unless git collapsed it (i.e. it is
 wholly ignored). Mixed folders that also hold tracked files are only ever touched
@@ -178,14 +198,13 @@ cannot restore, items remain in the Recycle Bin for manual restore — and is
 
 ## Open decisions
 
-*(None open. Scan granularity and lazy-vs-eager sizing were resolved under
-SCAN-1/SCAN-2.)*
+*(None open — every decision is recorded inline with the rule it belongs to.)*
 
 ---
 
 ## Backlog (build slices)
 
-All slices are **built and tested** (47 tests; solution builds with 0 warnings
+All slices are **built and tested** (56 tests; solution builds with 0 warnings
 under warnings-as-errors):
 
 - **B1 — Repo discovery** ✅ pick a root folder, list discovered repos (DISC-1/2).
