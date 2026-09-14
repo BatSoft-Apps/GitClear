@@ -194,6 +194,27 @@ Restore verb on an STA thread), then re-scans. Undo is best-effort — if the sh
 cannot restore, items remain in the Recycle Bin for manual restore — and is
 **forgotten** when the repository is deselected/changed or the app closes.
 
+**DEL-5** `SHFileOperation` also sets **`FOF_WANTNUKEWARNING`** (0x4000), which
+partially overrides `FOF_NOCONFIRMATION` to restore the one prompt that matters:
+Windows warns (Yes/No) before **permanently destroying** an item it cannot fit in
+the Recycle Bin. Declining sets `fAnyOperationsAborted`; `IRecycleBinService.Recycle`
+reports that as `false`, stops before any remaining chunks, and surfaces as
+`DeletionResult.Aborted` — **not** an exception, because declining is a normal user
+action. An aborted delete still records Undo and re-scans (DEL-3/4): items processed
+before the user backed out may already be recycled.
+*Why:* without this flag, `FOF_NOCONFIRMATION` auto-answers "yes" to that warning,
+so a multi-gigabyte `node_modules` exceeding the Recycle Bin's capacity was
+**silently and permanently deleted** with Undo unable to recover it — directly
+contradicting ARCH-4's "cheap undo insurance" and DEL-2's promise of
+recoverability. Rejected alternative: pre-checking the selection against the
+Recycle Bin's configured capacity in GitClear's own dialog — more code, and the
+capacity query is per-volume and unreliable, whereas the shell already knows
+exactly when it cannot recycle something.
+*Not automatically testable:* the warning is a modal shell dialog, so a test that
+triggered it would hang. The existing recycle→restore round-trips prove the flag
+does not prompt for normally-recyclable items; the warning path itself is verified
+manually.
+
 ---
 
 ## Open decisions

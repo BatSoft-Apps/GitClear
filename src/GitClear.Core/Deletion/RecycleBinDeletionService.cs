@@ -21,8 +21,8 @@ public sealed class RecycleBinDeletionService : IDeletionService
             cancellationToken.ThrowIfCancellationRequested();
 
             // Targets are files or wholly-ignored directories (DEL-1).
-            var existing = new List<string>(filePaths.Count);
-            foreach (var path in filePaths)
+            List<string> existing = new(filePaths.Count);
+            foreach (string path in filePaths)
             {
                 if (File.Exists(path) || Directory.Exists(path))
                 {
@@ -30,14 +30,10 @@ public sealed class RecycleBinDeletionService : IDeletionService
                 }
             }
 
-            var skipped = filePaths.Count - existing.Count;
+            int skipped = filePaths.Count - existing.Count;
+            bool completed = existing.Count == 0 || _recycleBin.Recycle(existing);
 
-            if (existing.Count > 0)
-            {
-                _recycleBin.Recycle(existing);
-            }
-
-            return new DeletionResult(existing.Count, skipped);
+            return new DeletionResult(existing.Count, skipped, Aborted: !completed);
         }, cancellationToken);
     }
 

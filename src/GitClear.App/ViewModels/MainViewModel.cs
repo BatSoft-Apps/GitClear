@@ -314,8 +314,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         try
         {
-            await _deletion.DeleteAsync(targets, _deleteCts.Token);
+            DeletionResult result = await _deletion.DeleteAsync(targets, _deleteCts.Token);
 
+            // Even a declined permanent-delete warning (DEL-5) may leave earlier
+            // targets already recycled, so record Undo and refresh either way.
             _lastDeletedTargets = targets;
             _lastDeletedFileCount = fileCount;
             UndoCommand.NotifyCanExecuteChanged();
@@ -323,7 +325,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             // Refresh so the tree reflects reality and the selection resets (DEL-3).
             await ScanRepositoryAsync(repository);
 
-            StatusMessage = $"Moved {fileCount:N0} {noun} to the Recycle Bin. Use Undo to restore.";
+            StatusMessage = result.Aborted
+                ? "Deletion stopped — nothing was permanently deleted. Anything already "
+                  + "moved to the Recycle Bin can be restored with Undo."
+                : $"Moved {fileCount:N0} {noun} to the Recycle Bin. Use Undo to restore.";
         }
         catch (OperationCanceledException)
         {

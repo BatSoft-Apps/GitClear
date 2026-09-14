@@ -98,6 +98,10 @@ internal sealed class ThrowingScanner(Exception exception) : IIgnoredFileScanner
 internal sealed class FakeDeletionService(DeletionResult? result = null, Exception? throwOnDelete = null)
     : IDeletionService
 {
+    /// <summary>Models the user declining a permanent-delete warning (DEL-5).</summary>
+    public static FakeDeletionService Aborting()
+        => new(new DeletionResult(0, 0, Aborted: true));
+
     public List<string> ReceivedPaths { get; } = [];
 
     public List<string> RestoredPaths { get; } = [];

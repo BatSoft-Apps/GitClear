@@ -8,10 +8,16 @@ namespace GitClear.Core.Deletion;
 public interface IRecycleBinService
 {
     /// <summary>
-    /// Sends the given existing paths to the Recycle Bin in one shell operation.
+    /// Sends the given existing paths to the Recycle Bin. Anything too large to
+    /// recycle prompts the user before being destroyed (DEL-5).
     /// </summary>
-    /// <exception cref="DeletionException">The shell operation failed or was aborted.</exception>
-    void Recycle(IReadOnlyList<string> paths);
+    /// <returns>
+    /// <c>true</c> if the operation completed; <c>false</c> if the user declined a
+    /// permanent-delete warning, in which case some earlier items may already
+    /// have been recycled.
+    /// </returns>
+    /// <exception cref="DeletionException">The shell operation failed.</exception>
+    bool Recycle(IReadOnlyList<string> paths);
 
     /// <summary>
     /// Restores Recycle Bin items back to the given original locations. Items no

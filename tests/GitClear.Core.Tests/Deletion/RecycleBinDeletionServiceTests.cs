@@ -39,11 +39,44 @@ public sealed class RecycleBinDeletionServiceTests
         Assert.Empty(recycleBin.Recycled);
     }
 
+    [Fact]
+    public async Task Reports_aborted_when_the_user_declines_a_permanent_delete_warning()
+    {
+        using TempDirectory temp = new();
+        string present = temp.CreateFile("big.bin", "x");
+
+        FakeRecycleBin recycleBin = new() { Completes = false };
+        RecycleBinDeletionService sut = new(recycleBin);
+
+        DeletionResult result = await sut.DeleteAsync([present]);
+
+        Assert.True(result.Aborted);
+    }
+
+    [Fact]
+    public async Task Is_not_aborted_on_a_normal_completed_delete()
+    {
+        using TempDirectory temp = new();
+        string present = temp.CreateFile("a.txt", "x");
+
+        RecycleBinDeletionService sut = new(new FakeRecycleBin());
+
+        DeletionResult result = await sut.DeleteAsync([present]);
+
+        Assert.False(result.Aborted);
+    }
+
     private sealed class FakeRecycleBin : IRecycleBinService
     {
         public List<string> Recycled { get; } = [];
 
-        public void Recycle(IReadOnlyList<string> paths) => Recycled.AddRange(paths);
+        public bool Completes { get; set; } = true;
+
+        public bool Recycle(IReadOnlyList<string> paths)
+        {
+            Recycled.AddRange(paths);
+            return Completes;
+        }
 
         public int Restore(IReadOnlyCollection<string> originalPaths) => originalPaths.Count;
     }

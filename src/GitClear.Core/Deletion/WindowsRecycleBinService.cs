@@ -9,9 +9,11 @@ namespace GitClear.Core.Deletion;
 
 /// <summary>
 /// Recycle Bin implementation over the Win32 <c>SHFileOperation</c> shell API,
-/// using <c>FOF_ALLOWUNDO</c> so deletions are undoable, with the no-UI flags so
-/// the core never pops shell dialogs. Paths are sent in chunks to stay well
-/// within any internal limit on the batched path buffer.
+/// using <c>FOF_ALLOWUNDO</c> so deletions are undoable. Progress and error UI
+/// are suppressed, but <c>FOF_WANTNUKEWARNING</c> deliberately restores the one
+/// prompt that matters: the warning shown when an item is too large for the
+/// Recycle Bin and would be destroyed instead of recycled (DEL-5). Paths are
+/// sent in chunks to stay well within any internal limit on the path buffer.
 /// </summary>
 public sealed class WindowsRecycleBinService : IRecycleBinService
 {
@@ -23,54 +25,64 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
     private const ushort FOF_ALLOWUNDO = 0x0040;
     private const ushort FOF_NOERRORUI = 0x0400;
 
-    private const ushort Flags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
+    // Partially overrides FOF_NOCONFIRMATION: warn (Yes/No) before permanently
+    // destroying anything that cannot be recycled, so the user can back out.
+    private const ushort FOF_WANTNUKEWARNING = 0x4000;
 
-    public void Recycle(IReadOnlyList<string> paths)
+    private const ushort Flags =
+        FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT | FOF_WANTNUKEWARNING;
+
+    public bool Recycle(IReadOnlyList<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
 
-        for (var offset = 0; offset < paths.Count; offset += ChunkSize)
+        for (int offset = 0; offset < paths.Count; offset += ChunkSize)
         {
-            var count = Math.Min(ChunkSize, paths.Count - offset);
-            var batch = new List<string>(count);
-            for (var i = 0; i < count; i++)
+            int count = Math.Min(ChunkSize, paths.Count - offset);
+            List<string> batch = new(count);
+            for (int i = 0; i < count; i++)
             {
                 batch.Add(paths[offset + i]);
             }
 
-            RecycleBatch(batch);
+            if (!RecycleBatch(batch))
+            {
+                // The user declined a permanent-delete warning: stop here rather
+                // than pressing on through the remaining chunks.
+                return false;
+            }
         }
+
+        return true;
     }
 
-    private static void RecycleBatch(List<string> batch)
+    /// <returns><c>false</c> if the user aborted the operation.</returns>
+    private static bool RecycleBatch(List<string> batch)
     {
         if (batch.Count == 0)
         {
-            return;
+            return true;
         }
 
         // pFrom is a list of NUL-separated paths; the marshaller appends the
         // final terminating NUL, giving the required double-NUL termination.
-        var from = string.Join('\0', batch) + '\0';
+        string from = string.Join('\0', batch) + '\0';
 
-        var operation = new ShFileOpStruct
+        ShFileOpStruct operation = new()
         {
             wFunc = FO_DELETE,
             pFrom = from,
             fFlags = Flags,
         };
 
-        var result = SHFileOperation(ref operation);
+        int result = SHFileOperation(ref operation);
         if (result != 0)
         {
             throw new DeletionException(
                 $"Moving files to the Recycle Bin failed (shell error 0x{result:X}).");
         }
 
-        if (operation.fAnyOperationsAborted != 0)
-        {
-            throw new DeletionException("The Recycle Bin operation was aborted.");
-        }
+        return operation.fAnyOperationsAborted == 0;
     }
 
     // ssfBITBUCKET — the Recycle Bin special folder.

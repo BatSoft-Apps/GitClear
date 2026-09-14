@@ -1,4 +1,5 @@
 using GitClear.App.Tests.TestSupport;
+using GitClear.App.ViewModels;
 using GitClear.Core.Deletion;
 using GitClear.Core.Model;
 using GitClear.Core.Scanning;
@@ -147,6 +148,28 @@ public sealed class DeletionCommandTests
         await sut.ActiveScan;
 
         Assert.False(sut.UndoCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Declining_a_permanent_delete_warning_still_refreshes_and_offers_undo()
+    {
+        FakeDeletionService deletion = FakeDeletionService.Aborting();
+        QueueScanner scanner = new(
+            Sut.Result(new IgnoredFileEntry("a.log", 10)),
+            Sut.Result());
+        MainViewModel sut = Sut.Create(
+            scanner: scanner, deletion: deletion, confirmation: new ConfirmationStub(true));
+
+        sut.SelectedRepository = Repo;
+        await sut.ActiveScan;
+        sut.RootNodes[0].Files.Single().IsChecked = true;
+
+        await sut.DeleteSelectedCommand.ExecuteAsync(null);
+
+        // Anything already recycled before the user backed out must stay undoable.
+        Assert.True(sut.UndoCommand.CanExecute(null));
+        Assert.Contains("nothing was permanently deleted", sut.StatusMessage);
+        Assert.DoesNotContain("Moved 1 file to the Recycle Bin", sut.StatusMessage);
     }
 
     [Fact]
