@@ -11,6 +11,26 @@ Recycle Bin. Complete and shipping; changes arrive as user requests, not slices.
 - Rationale lives **inline with the rule it belongs to**; there is no separate
   decision log.
 
+## User documentation
+
+- **`Documentation/USER-GUIDE.md`** — the end-user guide (what the app does, how to
+  drive it, safety rules, troubleshooting). Keep it in step with on-screen labels and
+  status messages; it quotes them verbatim.
+- `Documentation/` is for audience-facing docs; `Specifications/` is for design. Do
+  not mix them.
+- **`Documentation/USER-GUIDE.pdf`** is generated from the markdown — never edit it
+  by hand. Regenerate after any guide change (no pandoc needed; uses Edge headless):
+
+```
+python Documentation/md-to-html.py Documentation/USER-GUIDE.md %TEMP%\ug.html "GitClear — User Guide"
+"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --headless --disable-gpu --no-pdf-header-footer --print-to-pdf="Documentation\USER-GUIDE.pdf" "file:///%TEMP%/ug.html"
+```
+
+  `md-to-html.py` handles only the constructs the guide uses (h1/h2, paragraphs,
+  rules, pipe tables, fenced code, blockquotes, bullet/ordered lists with
+  multi-paragraph items, inline bold/italic/code). Extend it if the guide grows new
+  syntax.
+
 ## Rule-id families
 
 All owned by `Specifications/DESIGN.md`:
