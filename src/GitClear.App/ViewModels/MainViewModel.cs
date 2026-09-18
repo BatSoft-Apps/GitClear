@@ -25,6 +25,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly IIgnoredFileScanner _scanner;
     private readonly IDeletionService _deletion;
     private readonly IConfirmationDialog _confirmation;
+    private readonly IUserGuideService _userGuide;
 
     private CancellationTokenSource? _discoveryCts;
     private CancellationTokenSource? _scanCts;
@@ -40,13 +41,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IFolderPickerService folderPicker,
         IIgnoredFileScanner scanner,
         IDeletionService deletion,
-        IConfirmationDialog confirmation)
+        IConfirmationDialog confirmation,
+        IUserGuideService userGuide)
     {
         _discovery = discovery;
         _folderPicker = folderPicker;
         _scanner = scanner;
         _deletion = deletion;
         _confirmation = confirmation;
+        _userGuide = userGuide;
 
         Selection.PropertyChanged += OnSelectionChanged;
     }
@@ -256,7 +259,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         catch (GitCommandException ex)
         {
-            StatusMessage = $"Git could not scan this repository: {ex.Message}";
+            // Show git's own diagnostic so the user needn't re-run git themselves.
+            string detail = FlattenForStatus(ex.StandardError);
+            StatusMessage = detail.Length == 0
+                ? $"Git could not scan this repository (git exit code {ex.ExitCode})."
+                : $"Git could not scan this repository. Git says: {detail}";
         }
 #pragma warning disable CA1031 // UI-boundary safety net: fire-and-forget scan must never fault unobserved.
         catch (Exception ex)
@@ -418,7 +425,40 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         UndoCommand.NotifyCanExecuteChanged();
     }
 
+    /// <summary>Opens the user guide for the current UI culture (UI-5).</summary>
+    [RelayCommand]
+    private void OpenUserGuide()
+    {
+        if (!_userGuide.TryOpen())
+        {
+            StatusMessage = "Could not open the user guide. It may be missing from the "
+                + "installation folder, or no PDF viewer is registered.";
+        }
+    }
+
     // ---- Helpers ----------------------------------------------------------
+
+    /// <summary>
+    /// Squeezes a multi-line tool diagnostic onto the single-line status bar:
+    /// newlines and runs of whitespace become single spaces, and very long output
+    /// is clipped so the message stays readable.
+    /// </summary>
+    private static string FlattenForStatus(string? text)
+    {
+        const int MaxLength = 300;
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        string flattened = string.Join(' ', text.Split(
+            (char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+        return flattened.Length <= MaxLength
+            ? flattened
+            : string.Concat(flattened.AsSpan(0, MaxLength), "…");
+    }
 
     private static string DescribeDiscovery(int count, bool searching)
     {

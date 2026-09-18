@@ -49,6 +49,7 @@ public partial class App : Application
         // App services.
         services.AddSingleton<IFolderPickerService, FolderPickerService>();
         services.AddSingleton<IConfirmationDialog, MessageBoxConfirmationDialog>();
+        services.AddSingleton<IUserGuideService, UserGuideService>();
 
         // View models.
         services.AddSingleton<MainViewModel>();

@@ -1,4 +1,5 @@
 using GitClear.App.Tests.TestSupport;
+using GitClear.App.ViewModels;
 using GitClear.Core.Git;
 using GitClear.Core.Model;
 using GitClear.Core.Scanning;
@@ -80,6 +81,38 @@ public sealed class MainViewModelTests
 
         Assert.Empty(sut.RootNodes);
         Assert.Contains("Git was not found", sut.StatusMessage);
+    }
+
+    [Fact]
+    public async Task A_git_failure_shows_gits_own_message_flattened_onto_one_line()
+    {
+        // Git's real diagnostic, complete with newlines and indentation.
+        GitCommandException failure = new(
+            "git ls-files failed (exit code 128): ...",
+            exitCode: 128,
+            standardError: "fatal: detected dubious ownership in repository at '//VBoxSvr/Claude/GitClear'\n\n  To add an exception, call:\n\n\tgit config --global --add safe.directory ...");
+        MainViewModel sut = Sut.Create(scanner: new ThrowingScanner(failure));
+
+        sut.SelectedRepository = RepositoryInfo.Create(@"C:\root\a", false);
+        await sut.ActiveScan;
+
+        Assert.Contains("Git says: fatal: detected dubious ownership", sut.StatusMessage);
+        Assert.DoesNotContain("\n", sut.StatusMessage);
+        Assert.DoesNotContain("\t", sut.StatusMessage);
+        // The user should not be told to go and run git themselves.
+        Assert.DoesNotContain("exit code 128", sut.StatusMessage);
+    }
+
+    [Fact]
+    public async Task A_git_failure_with_no_output_falls_back_to_the_exit_code()
+    {
+        MainViewModel sut = Sut.Create(scanner: new ThrowingScanner(
+            new GitCommandException("failed", exitCode: 9, standardError: "   ")));
+
+        sut.SelectedRepository = RepositoryInfo.Create(@"C:\root\a", false);
+        await sut.ActiveScan;
+
+        Assert.Contains("git exit code 9", sut.StatusMessage);
     }
 
     [Fact]

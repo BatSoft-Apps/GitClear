@@ -46,11 +46,20 @@ All owned by `Specifications/DESIGN.md`:
 
 Never renumber or reuse an id — append.
 
+## Not internationalised (yet)
+
+The UI is **English-only**: no `.resx`/satellite assemblies/`IStringLocalizer`, and
+~71 hard-coded English literals. `ByteSize.Format` is culture-aware, but that is
+number formatting, not localisation. UI-5 provides culture-based *guide* selection,
+so translated guides can be dropped in as `Documentation/USER-GUIDE.<culture>.pdf`.
+Known locale defect: the Recycle Bin Restore verb is matched by English name, so
+Undo fails on a non-English Windows. See **Open decisions** in DESIGN.md.
+
 ## Ledgers
 
 Both are sections of `Specifications/DESIGN.md`:
 
-- **Open decisions** — open *design* questions (currently none).
+- **Open decisions** — open *design* questions (currently one: internationalisation).
 - **Backlog** — implementation slices (all built) plus "Later enhancements" and
   "Possible future enhancements".
 
@@ -58,7 +67,7 @@ Both are sections of `Specifications/DESIGN.md`:
 
 ```
 dotnet build GitClear.slnx          # must be 0 warnings (warnings-as-errors)
-dotnet test  GitClear.slnx          # 56 tests, all must pass
+dotnet test  GitClear.slnx          # 68 tests, all must pass
 dotnet run --project src/GitClear.App/GitClear.App.csproj
 ```
 

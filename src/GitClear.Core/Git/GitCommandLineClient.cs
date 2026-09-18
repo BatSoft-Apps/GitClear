@@ -66,9 +66,11 @@ public sealed class GitCommandLineClient : IGitClient
 
         if (process.ExitCode != 0)
         {
-            var stderr = (await readStderr.ConfigureAwait(false)).Trim();
+            string standardError = (await readStderr.ConfigureAwait(false)).Trim();
             throw new GitCommandException(
-                $"git ls-files failed (exit code {process.ExitCode}): {stderr}", process.ExitCode);
+                $"git ls-files failed (exit code {process.ExitCode}): {standardError}",
+                process.ExitCode,
+                standardError);
         }
 
         return ParseNulSeparated(stdout.ToArray());

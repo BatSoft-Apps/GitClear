@@ -58,6 +58,10 @@ excludes, `**` globs) is deep; mismatching it risks deleting a tracked file or
 missing junk. `git ls-files` gives the authoritative answer that matches the
 user's real workflow. Requires git on PATH — near-certain, since the user is
 scanning git repos. Missing-git is a handled error, not a fallback engine.
+Because git is the authority, when it fails **its own stderr is shown to the
+user verbatim** ("Git says: …", flattened onto one line and clipped), so nobody
+has to re-run git by hand to find out what went wrong; `GitCommandException`
+carries it in `StandardError`.
 
 **ARCH-4** Deletion moves items to the **Windows Recycle Bin**, not permanent
 delete. **[decided]**
@@ -168,6 +172,22 @@ never jump.
 bar uses a style trigger instead. The converter is still used for markers that
 never toggle at runtime.
 
+
+**UI-5** A **`?`** button (large, bold, rightmost in the toolbar) opens the user
+guide in the system's default viewer. The guide ships beside the executable in
+`Documentation/`, and `UserGuideLocator` picks the most specific file for
+`CultureInfo.CurrentUICulture` — `USER-GUIDE.<culture>.pdf`, then each parent
+culture, then the neutral `USER-GUIDE.pdf`. A translated guide is therefore added
+by dropping a file in; no code change. If no guide is installed, or no viewer is
+registered, the status line says so rather than failing silently.
+*Note:* the guide is **not yet translated**, and the app itself is **not
+internationalised** — see the deferred i18n decision below.
+**UI-6** The wholly-ignored marker is **U+1F4C1 📁**, not the line-art U+1F5C0 🗀.
+*Why:* at tree font size U+1F5C0 renders as a faint empty rectangle that reads as
+a missing character — verified side by side — which made the user guide's "look
+for the marker" instruction actively confusing. U+1F4C1 renders as an
+unmistakable colour folder on Windows.
+
 ---
 
 ## DEL — Deletion
@@ -219,7 +239,25 @@ manually.
 
 ## Open decisions
 
-*(None open — every decision is recorded inline with the rule it belongs to.)*
+**1. Internationalisation — scope and languages.** *(raised 2026-09-14, awaiting
+a ruling.)*
+
+GitClear is **not** internationalised today: no `.resx`/satellite assemblies/
+`IStringLocalizer`/`x:Uid`, and 71 hard-coded English literals (27 status and
+confirmation strings, 12 XAML labels, 32 Core exception messages). Only
+`ByteSize.Format` is culture-aware, and that is number formatting, not
+localisation.
+
+Two consequences to settle:
+- **A known locale bug:** DEL-4's Undo matches the shell Restore verb against the
+  literals `"Restore"`/`"Undelete"`, so Undo silently fails on a non-English
+  Windows. This is a defect regardless of the i18n decision.
+- **Translating the guide alone is incoherent** while the UI stays English: the
+  guide names on-screen controls, so a translated guide would quote English
+  button labels. Guide and UI should be translated together, or neither.
+
+UI-5 has already put the *mechanism* in place (culture-based guide selection with
+fallback), so only the decision about scope and target languages is outstanding.
 
 ---
 

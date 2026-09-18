@@ -21,4 +21,12 @@
     <InternalsVisibleTo Include="GitClear.App.Tests" />
   </ItemGroup>
 
+  <!-- Ship the user guide beside the executable so the Help button can open it.
+       The wildcard also picks up translated guides (USER-GUIDE.<culture>.pdf). -->
+  <ItemGroup>
+    <Content Include="..\..\Documentation\USER-GUIDE*.pdf"
+             Link="Documentation\%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

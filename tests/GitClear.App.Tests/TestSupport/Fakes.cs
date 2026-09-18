@@ -28,13 +28,15 @@ internal static class Sut
         IFolderPickerService? picker = null,
         IIgnoredFileScanner? scanner = null,
         IDeletionService? deletion = null,
-        IConfirmationDialog? confirmation = null) =>
+        IConfirmationDialog? confirmation = null,
+        IUserGuideService? userGuide = null) =>
         new(
             discovery ?? new FakeDiscovery(),
             picker ?? new StubFolderPicker(@"C:\root"),
             scanner ?? new FakeScanner(Result()),
             deletion ?? new FakeDeletionService(),
-            confirmation ?? new ConfirmationStub(true));
+            confirmation ?? new ConfirmationStub(true),
+            userGuide ?? new StubUserGuide());
 }
 
 internal sealed class FakeDiscovery(params RepositoryInfo[] repositories) : IRepositoryDiscoveryService
@@ -140,5 +142,16 @@ internal sealed class ConfirmationStub(bool result) : IConfirmationDialog
         Calls++;
         LastMessage = message;
         return result;
+    }
+}
+
+internal sealed class StubUserGuide(bool opens = true) : IUserGuideService
+{
+    public int Calls { get; private set; }
+
+    public bool TryOpen()
+    {
+        Calls++;
+        return opens;
     }
 }

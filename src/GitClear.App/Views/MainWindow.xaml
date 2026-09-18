@@ -31,6 +31,7 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Text="Folder:" VerticalAlignment="Center" Margin="0,0,8,0" />
             <TextBox Grid.Column="1" VerticalAlignment="Center" Padding="4,3"
@@ -41,6 +42,12 @@
                     Command="{Binding FindRepositoriesCommand}" />
             <Button Grid.Column="4" Content="Stop" Margin="8,0,0,0" Padding="12,4"
                     Command="{Binding StopCommand}" />
+            <!-- Help: deliberately a large, unmistakable question mark. -->
+            <Button Grid.Column="5" Content="?" Margin="12,0,0,0" Padding="0"
+                    Width="34" Height="30"
+                    FontSize="19" FontWeight="Bold" FontFamily="Segoe UI"
+                    ToolTip="Open the GitClear user guide"
+                    Command="{Binding OpenUserGuideCommand}" />
         </Grid>
 
         <!-- Row 1: unified busy indicator. Uses Hidden (not Collapsed) when idle so
@@ -110,7 +117,10 @@
                                 <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" IsThreeState="False"
                                           VerticalAlignment="Center" Margin="0,0,6,0" />
                                 <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
-                                <TextBlock Text="🗀" Margin="6,0,0,0" Opacity="0.7" VerticalAlignment="Center"
+                                <!-- U+1F4C1, not U+1F5C0: the line-art glyph renders as a
+                                     faint empty rectangle at this size and reads as a
+                                     missing character. -->
+                                <TextBlock Text="📁" Margin="6,0,0,0" VerticalAlignment="Center"
                                            ToolTip="Entire folder is ignored — deleted as a unit"
                                            Visibility="{Binding IsFullyIgnored, Converter={StaticResource BoolToVis}}" />
                                 <TextBlock Text="{Binding FormattedSize}" Opacity="0.55" Margin="8,0,0,0"
