@@ -1,6 +1,6 @@
 """Render the GitClear user guide's markdown subset to print-ready HTML.
 
-Handles exactly what the document uses: h1/h2, paragraphs, horizontal rules,
+Handles this markdown subset only: h1/h2, paragraphs, horizontal rules,
 pipe tables, fenced code blocks, blockquotes, bullet and ordered lists (with
 multi-paragraph items), and inline bold / italic / code.
 """

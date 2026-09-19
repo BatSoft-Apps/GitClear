@@ -10,6 +10,8 @@ public sealed class GitCommandException : Exception
     public GitCommandException(string message, int exitCode, string standardError = "")
         : base(message)
     {
+        ArgumentNullException.ThrowIfNull(standardError);
+
         ExitCode = exitCode;
         StandardError = standardError;
     }

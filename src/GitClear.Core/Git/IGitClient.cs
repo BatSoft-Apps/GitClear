@@ -1,8 +1,7 @@
 namespace GitClear.Core.Git;
 
 /// <summary>
-/// A thin wrapper over the git command line. Isolating git behind an interface
-/// keeps the scanner unit-testable with canned path lists (SCAN-1).
+/// A thin wrapper over the git command line, used by the scanner (SCAN-1).
 /// </summary>
 public interface IGitClient
 {

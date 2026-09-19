@@ -12,16 +12,16 @@ public sealed class WindowsRecycleBinServiceTests
     [Fact]
     public void Recycle_then_restore_round_trips_a_file()
     {
-        var sut = new WindowsRecycleBinService();
-        var path = Path.Combine(Path.GetTempPath(), $"gitclear-recycle-{Guid.NewGuid():N}.tmp");
+        WindowsRecycleBinService recycleBin = new();
+        string path = Path.Combine(Path.GetTempPath(), $"gitclear-recycle-{Guid.NewGuid():N}.tmp");
         File.WriteAllText(path, "throwaway");
 
         try
         {
-            sut.Recycle([path]);
+            recycleBin.Recycle([path]);
             Assert.False(File.Exists(path), "file should have been moved to the Recycle Bin");
 
-            var restored = sut.Restore([path]);
+            int restored = recycleBin.Restore([path]);
 
             Assert.Equal(1, restored);
             Assert.True(File.Exists(path), "file should have been restored to its original location");
@@ -38,28 +38,28 @@ public sealed class WindowsRecycleBinServiceTests
     [Fact]
     public void Recycle_then_restore_round_trips_a_whole_directory()
     {
-        var sut = new WindowsRecycleBinService();
-        var dir = Path.Combine(Path.GetTempPath(), $"gitclear-recycle-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "a.txt"), "x");
-        File.WriteAllText(Path.Combine(dir, "b.txt"), "y");
+        WindowsRecycleBinService recycleBin = new();
+        string directory = Path.Combine(Path.GetTempPath(), $"gitclear-recycle-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "a.txt"), "x");
+        File.WriteAllText(Path.Combine(directory, "b.txt"), "y");
 
         try
         {
-            sut.Recycle([dir]);
-            Assert.False(Directory.Exists(dir), "directory should have been moved to the Recycle Bin");
+            recycleBin.Recycle([directory]);
+            Assert.False(Directory.Exists(directory), "directory should have been moved to the Recycle Bin");
 
-            var restored = sut.Restore([dir]);
+            int restored = recycleBin.Restore([directory]);
 
             Assert.Equal(1, restored);
-            Assert.True(Directory.Exists(dir), "directory should have been restored");
-            Assert.True(File.Exists(Path.Combine(dir, "a.txt")), "directory contents should be restored");
+            Assert.True(Directory.Exists(directory), "directory should have been restored");
+            Assert.True(File.Exists(Path.Combine(directory, "a.txt")), "directory contents should be restored");
         }
         finally
         {
-            if (Directory.Exists(dir))
+            if (Directory.Exists(directory))
             {
-                Directory.Delete(dir, recursive: true);
+                Directory.Delete(directory, recursive: true);
             }
         }
     }
@@ -67,16 +67,16 @@ public sealed class WindowsRecycleBinServiceTests
     [Fact]
     public void Recycling_an_empty_list_is_a_no_op()
     {
-        var sut = new WindowsRecycleBinService();
+        WindowsRecycleBinService recycleBin = new();
 
-        sut.Recycle([]); // must not throw
+        recycleBin.Recycle([]); // must not throw
     }
 
     [Fact]
     public void Restoring_an_empty_list_returns_zero()
     {
-        var sut = new WindowsRecycleBinService();
+        WindowsRecycleBinService recycleBin = new();
 
-        Assert.Equal(0, sut.Restore([]));
+        Assert.Equal(0, recycleBin.Restore([]));
     }
 }

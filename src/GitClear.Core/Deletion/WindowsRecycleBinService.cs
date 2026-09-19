@@ -32,20 +32,18 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
     private const ushort Flags =
         FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT | FOF_WANTNUKEWARNING;
 
+    // ssfBITBUCKET — the Recycle Bin special folder.
+    private const int RecycleBinFolder = 10;
+
+    #region Recycle
+
     public bool Recycle(IReadOnlyList<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
 
-        for (int offset = 0; offset < paths.Count; offset += ChunkSize)
+        foreach (string[] chunk in paths.Chunk(ChunkSize))
         {
-            int count = Math.Min(ChunkSize, paths.Count - offset);
-            List<string> batch = new(count);
-            for (int i = 0; i < count; i++)
-            {
-                batch.Add(paths[offset + i]);
-            }
-
-            if (!RecycleBatch(batch))
+            if (!RecycleChunk(chunk))
             {
                 // The user declined a permanent-delete warning: stop here rather
                 // than pressing on through the remaining chunks.
@@ -57,16 +55,11 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
     }
 
     /// <returns><c>false</c> if the user aborted the operation.</returns>
-    private static bool RecycleBatch(List<string> batch)
+    private static bool RecycleChunk(string[] chunk)
     {
-        if (batch.Count == 0)
-        {
-            return true;
-        }
-
         // pFrom is a list of NUL-separated paths; the marshaller appends the
         // final terminating NUL, giving the required double-NUL termination.
-        string from = string.Join('\0', batch) + '\0';
+        string from = string.Join('\0', chunk) + '\0';
 
         ShFileOpStruct operation = new()
         {
@@ -85,8 +78,9 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
         return operation.fAnyOperationsAborted == 0;
     }
 
-    // ssfBITBUCKET — the Recycle Bin special folder.
-    private const int RecycleBinFolder = 10;
+    #endregion
+
+    #region Restore
 
     public int Restore(IReadOnlyCollection<string> originalPaths)
     {
@@ -96,7 +90,7 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
             return 0;
         }
 
-        var wanted = new HashSet<string>(originalPaths, StringComparer.OrdinalIgnoreCase);
+        HashSet<string> wanted = new(originalPaths, StringComparer.OrdinalIgnoreCase);
 
         // Shell.Application COM is STA-affine; run it on a dedicated STA thread.
         return RunOnStaThread(() => RestoreCore(wanted));
@@ -104,7 +98,7 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
 
     private static int RestoreCore(HashSet<string> wanted)
     {
-        var shellType = Type.GetTypeFromProgID("Shell.Application");
+        Type? shellType = Type.GetTypeFromProgID("Shell.Application");
         if (shellType is null)
         {
             return 0;
@@ -121,18 +115,18 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
             }
 
             // Restoring mutates the collection, so match first, then restore.
-            var matches = new List<dynamic>();
+            List<dynamic> matches = new();
             foreach (dynamic item in recycleBin.Items())
             {
-                var original = TryGetOriginalPath(item);
+                string? original = TryGetOriginalPath(item);
                 if (original is not null && wanted.Contains(original))
                 {
                     matches.Add(item);
                 }
             }
 
-            var restored = 0;
-            foreach (var item in matches)
+            int restored = 0;
+            foreach (dynamic item in matches)
             {
                 if (InvokeRestoreVerb(item))
                 {
@@ -200,18 +194,18 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
 
     private static int RunOnStaThread(Func<int> action)
     {
-        var result = 0;
+        int result = 0;
         Exception? error = null;
 
-        var thread = new Thread(() =>
+        Thread thread = new(() =>
         {
             try
             {
                 result = action();
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                error = ex;
+                error = exception;
             }
         })
         {
@@ -230,6 +224,10 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
         return result;
     }
 
+    #endregion
+
+    #region Shell interop
+
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
     private static extern int SHFileOperation(ref ShFileOpStruct fileOp);
 
@@ -245,4 +243,6 @@ public sealed class WindowsRecycleBinService : IRecycleBinService
         public IntPtr hNameMappings;
         public string? lpszProgressTitle;
     }
+
+    #endregion
 }

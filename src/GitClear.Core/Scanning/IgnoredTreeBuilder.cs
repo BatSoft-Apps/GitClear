@@ -9,8 +9,8 @@ namespace GitClear.Core.Scanning;
 /// </summary>
 public static class IgnoredTreeBuilder
 {
-    public static IgnoredFolderNode Build(string repositoryPath, IEnumerable<IgnoredFileEntry> files) =>
-        Build(repositoryPath, files, []);
+    public static IgnoredFolderNode Build(string repositoryPath, IEnumerable<IgnoredFileEntry> files)
+        => Build(repositoryPath, files, []);
 
     public static IgnoredFolderNode Build(
         string repositoryPath,
@@ -21,104 +21,53 @@ public static class IgnoredTreeBuilder
         ArgumentNullException.ThrowIfNull(files);
         ArgumentNullException.ThrowIfNull(fullyIgnoredDirectories);
 
-        var root = new FolderBuilder(new DirectoryInfo(repositoryPath).Name, relativePath: string.Empty);
+        FolderBuilder root = new(new DirectoryInfo(repositoryPath).Name, relativePath: string.Empty);
 
-        foreach (var entry in files)
+        foreach (IgnoredFileEntry file in files)
         {
-            var segments = Split(entry.RelativePath);
-            if (segments.Length == 0)
-            {
-                continue; // Defensive: ignore blank paths.
-            }
-
-            var folder = root;
-            for (var i = 0; i < segments.Length - 1; i++)
-            {
-                folder = folder.GetOrAddSubfolder(segments[i]);
-            }
-
-            folder.Files.Add(new FileLeaf(segments[^1], entry.RelativePath, entry.Size));
+            string[] segments = Split(file.RelativePath);
+            root.GetOrAddDescendant(segments[..^1])
+                .Files.Add(new FileLeaf(segments[^1], file.RelativePath, file.Size));
         }
 
-        foreach (var entry in fullyIgnoredDirectories)
+        foreach (IgnoredDirectoryEntry directory in fullyIgnoredDirectories)
         {
-            var segments = Split(entry.RelativePath);
-            if (segments.Length == 0)
-            {
-                continue;
-            }
-
-            var folder = root;
-            for (var i = 0; i < segments.Length - 1; i++)
-            {
-                folder = folder.GetOrAddSubfolder(segments[i]);
-            }
-
-            var target = folder.GetOrAddSubfolder(segments[^1]);
-            target.MarkFullyIgnored(entry.TotalSize, entry.FileCount);
+            root.GetOrAddDescendant(Split(directory.RelativePath))
+                .MarkFullyIgnored(directory.TotalSize, directory.FileCount);
         }
 
         return Freeze(root, repositoryPath);
     }
 
-    private static string[] Split(string relativePath) =>
-        relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+    /// <summary>Turns a git-style ('/'-separated) repository-relative path into an absolute one.</summary>
+    internal static string ToFullPath(string repositoryPath, string relativePath)
+        => Path.Combine(repositoryPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+    private static string[] Split(string relativePath)
+        => relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
     private static IgnoredFolderNode Freeze(FolderBuilder builder, string repositoryPath)
     {
-        var fullPath = builder.RelativePath.Length == 0
-            ? repositoryPath
-            : ToFullPath(repositoryPath, builder.RelativePath);
+        string fullPath = ToFullPath(repositoryPath, builder.RelativePath);
 
         // A wholly-ignored directory is a leaf: no children, size from the walk.
         if (builder.IsFullyIgnored)
         {
-            return new IgnoredFolderNode
-            {
-                Name = builder.Name,
-                RelativePath = builder.RelativePath,
-                FullPath = fullPath,
-                IsFullyIgnored = true,
-                Subfolders = [],
-                Files = [],
-                TotalSize = builder.FullyIgnoredSize,
-                TotalFileCount = builder.FullyIgnoredCount,
-            };
+            return IgnoredFolderNode.FullyIgnored(
+                builder.Name, builder.RelativePath, fullPath, builder.FullyIgnoredSize, builder.FullyIgnoredCount);
         }
 
-        var subfolders = builder.Subfolders.Values
-            .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(f => Freeze(f, repositoryPath))
-            .ToList();
+        IEnumerable<IgnoredFolderNode> subfolders = builder.Subfolders.Values
+            .OrderBy(subfolder => subfolder.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(subfolder => Freeze(subfolder, repositoryPath));
 
-        var childFiles = builder.Files
-            .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(f => new IgnoredFileNode
-            {
-                Name = f.Name,
-                RelativePath = f.RelativePath,
-                FullPath = ToFullPath(repositoryPath, f.RelativePath),
-                Size = f.Size,
-            })
-            .ToList();
+        IEnumerable<IgnoredFileNode> files = builder.Files
+            .OrderBy(file => file.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(file => new IgnoredFileNode(
+                file.Name, file.RelativePath, ToFullPath(repositoryPath, file.RelativePath), file.Size));
 
-        var totalSize = childFiles.Sum(f => f.Size) + subfolders.Sum(f => f.TotalSize);
-        var totalCount = childFiles.Count + subfolders.Sum(f => f.TotalFileCount);
-
-        return new IgnoredFolderNode
-        {
-            Name = builder.Name,
-            RelativePath = builder.RelativePath,
-            FullPath = fullPath,
-            Subfolders = subfolders,
-            Files = childFiles,
-            TotalSize = totalSize,
-            TotalFileCount = totalCount,
-        };
+        return IgnoredFolderNode.Folder(builder.Name, builder.RelativePath, fullPath, subfolders, files);
     }
-
-    private static string ToFullPath(string repositoryPath, string relativePath) =>
-        Path.Combine(repositoryPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
 
     /// <summary>Mutable scaffold used only while building; frozen into records at the end.</summary>
     private sealed class FolderBuilder(string name, string relativePath)
@@ -129,8 +78,7 @@ public static class IgnoredTreeBuilder
 
         // Case-insensitive keys: Windows paths are case-insensitive, so entries
         // differing only by case belong to the same folder.
-        public Dictionary<string, FolderBuilder> Subfolders { get; } =
-            new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, FolderBuilder> Subfolders { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public List<FileLeaf> Files { get; } = [];
 
@@ -140,16 +88,16 @@ public static class IgnoredTreeBuilder
 
         public int FullyIgnoredCount { get; private set; }
 
-        public FolderBuilder GetOrAddSubfolder(string name)
+        /// <summary>Walks down the given folder names, creating any that are missing.</summary>
+        public FolderBuilder GetOrAddDescendant(IEnumerable<string> folderNames)
         {
-            if (!Subfolders.TryGetValue(name, out var child))
+            FolderBuilder folder = this;
+            foreach (string folderName in folderNames)
             {
-                var childRelative = RelativePath.Length == 0 ? name : $"{RelativePath}/{name}";
-                child = new FolderBuilder(name, childRelative);
-                Subfolders[name] = child;
+                folder = folder.GetOrAddSubfolder(folderName);
             }
 
-            return child;
+            return folder;
         }
 
         public void MarkFullyIgnored(long totalSize, int fileCount)
@@ -157,6 +105,18 @@ public static class IgnoredTreeBuilder
             IsFullyIgnored = true;
             FullyIgnoredSize = totalSize;
             FullyIgnoredCount = fileCount;
+        }
+
+        private FolderBuilder GetOrAddSubfolder(string folderName)
+        {
+            if (!Subfolders.TryGetValue(folderName, out FolderBuilder? child))
+            {
+                string childRelativePath = RelativePath.Length == 0 ? folderName : $"{RelativePath}/{folderName}";
+                child = new FolderBuilder(folderName, childRelativePath);
+                Subfolders[folderName] = child;
+            }
+
+            return child;
         }
     }
 

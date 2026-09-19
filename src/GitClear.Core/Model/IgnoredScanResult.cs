@@ -5,14 +5,20 @@ namespace GitClear.Core.Model;
 /// </summary>
 public sealed record IgnoredScanResult
 {
-    /// <summary>
-    /// Root of the ignored-file tree (represents the repository root folder).
-    /// Its <see cref="IgnoredFolderNode.FullPath"/> is the scanned repository path.
-    /// </summary>
-    public required IgnoredFolderNode Root { get; init; }
+    public IgnoredScanResult(IgnoredFolderNode root, int unreadableFileCount)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentOutOfRangeException.ThrowIfNegative(unreadableFileCount);
+
+        Root = root;
+        UnreadableFileCount = unreadableFileCount;
+    }
+
+    /// <summary>Root of the ignored-file tree (represents the repository root folder).</summary>
+    public IgnoredFolderNode Root { get; }
 
     /// <summary>Number of ignored files that could not be statted (counted as size 0).</summary>
-    public required int UnreadableFileCount { get; init; }
+    public int UnreadableFileCount { get; }
 
     /// <summary>Total size in bytes of all ignored files.</summary>
     public long TotalSize => Root.TotalSize;

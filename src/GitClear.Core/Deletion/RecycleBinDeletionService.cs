@@ -1,28 +1,33 @@
 namespace GitClear.Core.Deletion;
 
 /// <summary>
-/// Default <see cref="IDeletionService"/>: filters to files that still exist and
+/// Default <see cref="IDeletionService"/>: keeps the targets that still exist and
 /// recycles them via <see cref="IRecycleBinService"/> on a background thread.
 /// </summary>
 public sealed class RecycleBinDeletionService : IDeletionService
 {
     private readonly IRecycleBinService _recycleBin;
 
-    public RecycleBinDeletionService(IRecycleBinService recycleBin) => _recycleBin = recycleBin;
+    public RecycleBinDeletionService(IRecycleBinService recycleBin)
+    {
+        ArgumentNullException.ThrowIfNull(recycleBin);
+
+        _recycleBin = recycleBin;
+    }
 
     public Task<DeletionResult> DeleteAsync(
-        IReadOnlyCollection<string> filePaths,
+        IReadOnlyCollection<string> targetPaths,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(filePaths);
+        ArgumentNullException.ThrowIfNull(targetPaths);
 
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             // Targets are files or wholly-ignored directories (DEL-1).
-            List<string> existing = new(filePaths.Count);
-            foreach (string path in filePaths)
+            List<string> existing = new(targetPaths.Count);
+            foreach (string path in targetPaths)
             {
                 if (File.Exists(path) || Directory.Exists(path))
                 {
@@ -30,10 +35,10 @@ public sealed class RecycleBinDeletionService : IDeletionService
                 }
             }
 
-            int skipped = filePaths.Count - existing.Count;
+            int skipped = targetPaths.Count - existing.Count;
             bool completed = existing.Count == 0 || _recycleBin.Recycle(existing);
 
-            return new DeletionResult(existing.Count, skipped, Aborted: !completed);
+            return new DeletionResult(existing.Count, skipped, aborted: !completed);
         }, cancellationToken);
     }
 

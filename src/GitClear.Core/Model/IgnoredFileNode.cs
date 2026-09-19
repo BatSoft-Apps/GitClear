@@ -5,15 +5,28 @@ namespace GitClear.Core.Model;
 /// </summary>
 public sealed record IgnoredFileNode
 {
+    public IgnoredFileNode(string name, string relativePath, string fullPath, long size)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fullPath);
+        ArgumentOutOfRangeException.ThrowIfNegative(size);
+
+        Name = name;
+        RelativePath = relativePath;
+        FullPath = fullPath;
+        Size = size;
+    }
+
     /// <summary>File name (leaf), for display.</summary>
-    public required string Name { get; init; }
+    public string Name { get; }
 
     /// <summary>Path relative to the repository root, using '/' separators (as git reports).</summary>
-    public required string RelativePath { get; init; }
+    public string RelativePath { get; }
 
     /// <summary>Absolute path on disk.</summary>
-    public required string FullPath { get; init; }
+    public string FullPath { get; }
 
     /// <summary>File size in bytes (0 if it could not be statted).</summary>
-    public required long Size { get; init; }
+    public long Size { get; }
 }

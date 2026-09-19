@@ -15,7 +15,12 @@ public sealed class GitIgnoredFileScanner : IIgnoredFileScanner
 
     private readonly IGitClient _git;
 
-    public GitIgnoredFileScanner(IGitClient git) => _git = git;
+    public GitIgnoredFileScanner(IGitClient git)
+    {
+        ArgumentNullException.ThrowIfNull(git);
+
+        _git = git;
+    }
 
     public async Task<IgnoredScanResult> ScanAsync(
         string repositoryPath,
@@ -28,74 +33,57 @@ public sealed class GitIgnoredFileScanner : IIgnoredFileScanner
             throw new DirectoryNotFoundException($"Repository folder not found: {repositoryPath}");
         }
 
-        var entries = await _git.GetIgnoredPathsAsync(repositoryPath, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> entries =
+            await _git.GetIgnoredPathsAsync(repositoryPath, cancellationToken).ConfigureAwait(false);
 
         // Sizing is blocking I/O — keep it off the caller's thread.
         return await Task.Run(
-            () => SizeAndBuild(repositoryPath, entries, progress, cancellationToken),
+            () => SizeAndBuild(repositoryPath, entries, new SizingTally(progress), cancellationToken),
             cancellationToken).ConfigureAwait(false);
     }
 
     private static IgnoredScanResult SizeAndBuild(
         string repositoryPath,
         IReadOnlyList<string> entries,
-        IProgress<ScanProgress>? progress,
+        SizingTally tally,
         CancellationToken cancellationToken)
     {
-        var files = new List<IgnoredFileEntry>();
-        var directories = new List<IgnoredDirectoryEntry>();
-        var unreadable = 0;
-        var processed = 0;
+        List<IgnoredFileEntry> files = [];
+        List<IgnoredDirectoryEntry> directories = [];
 
-        void ReportProgress()
-        {
-            processed++;
-            if (progress is not null && processed % ProgressReportInterval == 0)
-            {
-                progress.Report(new ScanProgress(processed));
-            }
-        }
-
-        foreach (var entry in entries)
+        foreach (string entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             if (entry.EndsWith('/'))
             {
-                var relative = entry.TrimEnd('/');
-                var fullPath = ToFullPath(repositoryPath, relative);
-                var (size, count) = MeasureDirectory(fullPath, ReportProgress, ref unreadable, cancellationToken);
-                directories.Add(new IgnoredDirectoryEntry(relative, size, count));
+                string relativePath = entry.TrimEnd('/');
+                string fullPath = IgnoredTreeBuilder.ToFullPath(repositoryPath, relativePath);
+                (long size, int fileCount) = MeasureDirectory(fullPath, tally, cancellationToken);
+                directories.Add(new IgnoredDirectoryEntry(relativePath, size, fileCount));
             }
             else
             {
-                files.Add(new IgnoredFileEntry(entry, SizeOf(ToFullPath(repositoryPath, entry), ref unreadable)));
-                ReportProgress();
+                string fullPath = IgnoredTreeBuilder.ToFullPath(repositoryPath, entry);
+                files.Add(new IgnoredFileEntry(entry, SizeOf(fullPath, tally)));
+                tally.CountProcessed();
             }
         }
 
-        if (progress is not null)
-        {
-            progress.Report(new ScanProgress(processed));
-        }
+        tally.ReportFinal();
 
-        var root = IgnoredTreeBuilder.Build(repositoryPath, files, directories);
-
-        return new IgnoredScanResult
-        {
-            Root = root,
-            UnreadableFileCount = unreadable,
-        };
+        return new IgnoredScanResult(
+            IgnoredTreeBuilder.Build(repositoryPath, files, directories),
+            tally.Unreadable);
     }
 
-    private static (long Size, int Count) MeasureDirectory(
+    private static (long Size, int FileCount) MeasureDirectory(
         string directoryPath,
-        Action onFileProcessed,
-        ref int unreadable,
+        SizingTally tally,
         CancellationToken cancellationToken)
     {
         long size = 0;
-        var count = 0;
+        int fileCount = 0;
 
         IEnumerable<string> filePaths;
         try
@@ -104,13 +92,13 @@ public sealed class GitIgnoredFileScanner : IIgnoredFileScanner
             // is safe to enumerate the whole subtree.
             filePaths = Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            unreadable++;
+            tally.CountUnreadable();
             return (0, 0);
         }
 
-        using var enumerator = filePaths.GetEnumerator();
+        using IEnumerator<string> enumerator = filePaths.GetEnumerator();
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -125,34 +113,61 @@ public sealed class GitIgnoredFileScanner : IIgnoredFileScanner
 
                 filePath = enumerator.Current;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 // A directory became unreadable mid-walk — stop counting this subtree.
-                unreadable++;
+                tally.CountUnreadable();
                 break;
             }
 
-            size += SizeOf(filePath, ref unreadable);
-            count++;
-            onFileProcessed();
+            size += SizeOf(filePath, tally);
+            fileCount++;
+            tally.CountProcessed();
         }
 
-        return (size, count);
+        return (size, fileCount);
     }
 
-    private static long SizeOf(string fullPath, ref int unreadable)
+    private static long SizeOf(string fullPath, SizingTally tally)
     {
         try
         {
             return new FileInfo(fullPath).Length;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            unreadable++;
+            tally.CountUnreadable();
             return 0;
         }
     }
 
-    private static string ToFullPath(string repositoryPath, string relativePath) =>
-        Path.Combine(repositoryPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+    /// <summary>
+    /// Counts sized and unreadable files during one scan, reporting progress every
+    /// <see cref="ProgressReportInterval"/> files and once more at the end.
+    /// </summary>
+    private sealed class SizingTally(IProgress<ScanProgress>? progress)
+    {
+        private int _processed;
+
+        public int Unreadable { get; private set; }
+
+        public void CountProcessed()
+        {
+            _processed++;
+            if (_processed % ProgressReportInterval == 0)
+            {
+                progress?.Report(new ScanProgress(_processed));
+            }
+        }
+
+        public void CountUnreadable()
+        {
+            Unreadable++;
+        }
+
+        public void ReportFinal()
+        {
+            progress?.Report(new ScanProgress(_processed));
+        }
+    }
 }

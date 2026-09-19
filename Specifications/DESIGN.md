@@ -37,22 +37,24 @@ once any one area outgrows a screen.
 ## ARCH — Architecture
 
 **ARCH-1** Windows-only desktop application. **[decided]**
-*Why:* target audience is Windows; unlocks native tree/list UX and simplest
+*Why:* target audience is Windows; unlocks native tree/list UX (user experience) and simplest
 single-exe distribution.
 
-**ARCH-2** .NET 10 (LTS), C#, **WPF** for the UI. WinUI 3 and MAUI rejected. **[decided]**
+**ARCH-2** .NET 10 LTS (Long-Term Support), C#, **WPF** (Windows Presentation
+Foundation) for the UI (user interface). WinUI 3 and MAUI (.NET Multi-platform
+App UI) rejected. **[decided]**
 *(Target framework `net10.0-windows`; .NET 10 is the installed LTS on the build machine.)*
 *Why:* the app is control-heavy (`TreeView` + `ListView` + tri-state checkboxes
 + virtualization for huge trees) and filesystem-heavy (Win32 shell interop for
 the Recycle Bin) — WPF's core strengths, with zero deployment friction (plain
-`.exe`). WinUI 3 costs Windows App SDK packaging overhead and has rougher
+`.exe`). WinUI 3 costs Windows App SDK (software development kit) packaging overhead and has rougher
 tree/virtualization for a Fluent look this utility does not need. MAUI is a
 mobile-first cross-platform framework that on Windows renders via WinUI 3
 anyway — wrong altitude for a Windows-only desktop utility, with weak desktop
 data controls.
 
 **ARCH-3** The set of ignored files is obtained **from the installed `git`
-CLI**, never from a reimplementation of git's ignore logic. **[decided]**
+CLI** (command-line interface), never from a reimplementation of git's ignore logic. **[decided]**
 *Why:* git's ignore engine (negation, nested overrides, `info/exclude`, global
 excludes, `**` globs) is deep; mismatching it risks deleting a tracked file or
 missing junk. `git ls-files` gives the authoritative answer that matches the
@@ -68,7 +70,8 @@ delete. **[decided]**
 *Why:* destructive tool; cheap undo insurance against a mistaken selection.
 
 **ARCH-5** Layout: `GitClear.Core` (UI-free domain + services) is separate from
-`GitClear.App` (WPF/MVVM). MVVM via CommunityToolkit.Mvvm; DI via
+`GitClear.App` (WPF, MVVM — Model-View-ViewModel). MVVM via CommunityToolkit.Mvvm;
+DI (dependency injection) via
 Microsoft.Extensions.DependencyInjection. The app builds a container in
 `App.OnStartup`, resolves the main window from it, and installs a
 last-resort `DispatcherUnhandledException` handler; Core exposes one
@@ -172,7 +175,6 @@ never jump.
 bar uses a style trigger instead. The converter is still used for markers that
 never toggle at runtime.
 
-
 **UI-5** A **`?`** button (large, bold, rightmost in the toolbar) opens the user
 guide in the system's default viewer. The guide ships beside the executable in
 `Documentation/`, and `UserGuideLocator` picks the most specific file for
@@ -180,8 +182,7 @@ guide in the system's default viewer. The guide ships beside the executable in
 culture, then the neutral `USER-GUIDE.pdf`. A translated guide is therefore added
 by dropping a file in; no code change. If no guide is installed, or no viewer is
 registered, the status line says so rather than failing silently.
-*Note:* the guide is **not yet translated**, and the app itself is **not
-internationalised** — see the deferred i18n decision below.
+
 **UI-6** The wholly-ignored marker is **U+1F4C1 📁**, not the line-art U+1F5C0 🗀.
 *Why:* at tree font size U+1F5C0 renders as a faint empty rectangle that reads as
 a missing character — verified side by side — which made the user guide's "look
@@ -210,7 +211,7 @@ at the individual-file level. Non-existent targets (already deleted) are skipped
 
 **DEL-4** Single-level **Undo** restores the last deletion from the Recycle Bin
 (match items by original path via `System.Recycle.DeletedFrom`, invoke the shell
-Restore verb on an STA thread), then re-scans. Undo is best-effort — if the shell
+Restore verb on an STA (single-threaded apartment) thread), then re-scans. Undo is best-effort — if the shell
 cannot restore, items remain in the Recycle Bin for manual restore — and is
 **forgotten** when the repository is deselected/changed or the app closes.
 
@@ -230,10 +231,6 @@ recoverability. Rejected alternative: pre-checking the selection against the
 Recycle Bin's configured capacity in GitClear's own dialog — more code, and the
 capacity query is per-volume and unreliable, whereas the shell already knows
 exactly when it cannot recycle something.
-*Not automatically testable:* the warning is a modal shell dialog, so a test that
-triggered it would hang. The existing recycle→restore round-trips prove the flag
-does not prompt for normally-recyclable items; the warning path itself is verified
-manually.
 
 ---
 
@@ -243,15 +240,16 @@ manually.
 a ruling.)*
 
 GitClear is **not** internationalised today: no `.resx`/satellite assemblies/
-`IStringLocalizer`/`x:Uid`, and 71 hard-coded English literals (27 status and
-confirmation strings, 12 XAML labels, 32 Core exception messages). Only
+`IStringLocalizer`/`x:Uid`, and — when this was raised — 71 hard-coded English
+literals (27 status and confirmation strings, 12 XAML labels, 32 Core exception
+messages). Only
 `ByteSize.Format` is culture-aware, and that is number formatting, not
-localisation.
+localisation. Since 2026-09-18 the status and confirmation wording lives in one class,
+`UserMessages`, instead of being spread through the main view model.
 
 Two consequences to settle:
-- **A known locale bug:** DEL-4's Undo matches the shell Restore verb against the
-  literals `"Restore"`/`"Undelete"`, so Undo silently fails on a non-English
-  Windows. This is a defect regardless of the i18n decision.
+- **A known locale defect in Undo** (see *Known limitations and unverified paths*)
+  is a defect whatever this decision turns out to be.
 - **Translating the guide alone is incoherent** while the UI stays English: the
   guide names on-screen controls, so a translated guide would quote English
   button labels. Guide and UI should be translated together, or neither.
@@ -259,11 +257,43 @@ Two consequences to settle:
 UI-5 has already put the *mechanism* in place (culture-based guide selection with
 fallback), so only the decision about scope and target languages is outstanding.
 
+**2. Interfaces with a single real implementation.** *(raised 2026-09-18, awaiting
+a ruling.)*
+
+The working agreement treats an interface with only one real implementation (test
+doubles don't count) as usually redundant, and asks for a verdict before one is
+added or deleted. GitClear has eight:
+
+| Interface | Real implementation | Test double |
+|---|---|---|
+| `IRepositoryDiscoveryService` | `RepositoryDiscoveryService` | `FakeDiscovery` |
+| `IIgnoredFileScanner` | `GitIgnoredFileScanner` | `FakeScanner`, `QueueScanner`, `ThrowingScanner` |
+| `IDeletionService` | `RecycleBinDeletionService` | `FakeDeletionService` |
+| `IRecycleBinService` | `WindowsRecycleBinService` | `FakeRecycleBin` |
+| `IFolderPickerService` | `FolderPickerService` | `StubFolderPicker` |
+| `IConfirmationDialog` | `MessageBoxConfirmationDialog` | `StubConfirmation` |
+| `IUserGuideService` | `UserGuideService` | `StubUserGuide` |
+| `IGitClient` | `GitCommandLineClient` | **none** |
+
+Seven exist so tests can substitute something that would otherwise run git, touch
+the real Recycle Bin, or open a dialog — high-level policy (the view model, the
+deletion service) depending on an abstraction over low-level detail.
+`IGitClient` has no test double at all: no test feeds the scanner canned path
+lists — the scanner is tested against real git. `IUserGuideService` was added with the help button, before
+this rule was in the agreement.
+
+Two alternatives — pick one:
+
+- **Keep the seven as test seams, delete `IGitClient`** *(leaning)* — the view-model
+  and deletion tests stay fast and deterministic; the one seam nothing uses goes.
+- **Collapse them** — those tests would have to drive real git, the real Recycle
+  Bin and real dialogs, or be deleted.
+
 ---
 
 ## Backlog (build slices)
 
-All slices are **built and tested** (56 tests; solution builds with 0 warnings
+All slices are **built and tested** (68 tests; solution builds with 0 warnings
 under warnings-as-errors):
 
 - **B1 — Repo discovery** ✅ pick a root folder, list discovered repos (DISC-1/2).
@@ -277,10 +307,43 @@ under warnings-as-errors):
 ### Later enhancements (built after the initial delivery)
 
 - **Three-pane UI** — repositories moved from a dropdown to a left-hand list (UI-1).
-- **Wholesale folder deletion** — `--directory` scan + delete wholly-ignored
-  directories as a unit, fixing the "thousands of files take ages" performance
-  problem (SCAN-1/2, DEL-1).
+- **Wholesale folder deletion** — wholly-ignored directories deleted as a unit
+  (SCAN-1/2, DEL-1).
 - **Stop** (unified cancel) and single-level **Undo** (DEL-4, UI-4).
+- **Permanent-delete warning** before destroying anything too big for the
+  Recycle Bin (DEL-5).
+- **Help button** — `?` opens the user guide, chosen by UI culture (UI-5).
+- **Legible folder marker** — 📁 instead of the faint 🗀 (UI-6).
+- **Git's own message in the status line** — "Git says: …" (ARCH-3).
+- **Coding-standards conformance** (2026-09-18; behaviour unchanged, so no rule
+  ids) — no `var` (now a build error), `=>` placement, full names; model types
+  validate themselves in their constructors; `MainViewModel` owns its state
+  (private setters, read-only collections) and its wording moved to
+  `UserMessages`. Verified end to end in the real window: find → scan → delete →
+  Undo → close.
+
+### Known limitations and unverified paths
+
+- **Undo fails on a non-English Windows** — the Recycle Bin Restore verb is
+  matched against the English literals `"Restore"`/`"Undelete"` (DEL-4), so on any
+  other Windows language Undo restores nothing and reports *"Nothing could be
+  restored automatically — check the Recycle Bin."*
+- **UI is English-only; the guide is untranslated** (Open decision 1).
+- **Unverified: the DEL-5 warning itself.** It is a modal shell dialog, so a test
+  that triggered it would hang. (The recycle→restore round-trip tests do show the
+  flag does not prompt for items that *can* be recycled.) Manual check: shrink the Recycle Bin's capacity,
+  delete a larger ignored folder, expect Windows' permanent-delete warning, click
+  **No**, expect *"Deletion stopped — nothing was permanently deleted."*
+- **Unverified: UI-5 from a local install.** Invoked on the `Z:` VirtualBox share,
+  the shell showed Windows' "How do you want to open this file?" picker instead
+  of opening Edge, although `.pdf` is associated with `MSEdgePDF`. Expected to
+  open directly from a local folder; not yet confirmed.
+
+- **Two deliberate exceptions to the full-names rule.** The shell-interop struct
+  keeps the Win32 field names of `SHFILEOPSTRUCT` (`hwnd`, `pFrom`, `fFlags`…) so
+  it can be checked against Microsoft's documentation; and the two `App`
+  overrides keep the framework's parameter name `e`, because analyzer CA1725
+  fails the build when an override renames a parameter.
 
 ### Possible future enhancements (not yet scoped)
 

@@ -1,9 +1,8 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.IO;
+using System.Runtime.CompilerServices;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using GitClear.App.Formatting;
 using GitClear.App.Services;
 using GitClear.Core.Deletion;
 using GitClear.Core.Discovery;
@@ -14,9 +13,10 @@ using GitClear.Core.Scanning;
 namespace GitClear.App.ViewModels;
 
 /// <summary>
-/// Root view model for the main window. Owns folder selection, repository
-/// discovery, the ignored-file scan, tri-state selection, deletion to the
-/// Recycle Bin, and single-level Undo.
+/// Root view model for the main window: runs the find → scan → select → delete →
+/// undo workflow. What it coordinates lives elsewhere — the tree and its running
+/// total (<see cref="FolderNodeViewModel"/>, <see cref="SelectionTracker"/>), the
+/// wording (<see cref="UserMessages"/>) and the work itself (the Core services).
 /// </summary>
 public sealed partial class MainViewModel : ObservableObject, IDisposable
 {
@@ -27,14 +27,20 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly IConfirmationDialog _confirmation;
     private readonly IUserGuideService _userGuide;
 
-    private CancellationTokenSource? _discoveryCts;
-    private CancellationTokenSource? _scanCts;
-    private CancellationTokenSource? _deleteCts;
+    private readonly ObservableCollection<RepositoryInfo> _repositories = [];
+    private readonly ObservableCollection<FolderNodeViewModel> _rootNodes = [];
+
+    // Each operation creates, owns and disposes its own source; the field lets Stop reach it.
+    private CancellationTokenSource? _discoveryCancellation;
+    private CancellationTokenSource? _scanCancellation;
+    private CancellationTokenSource? _deleteCancellation;
     private Task _activeScan = Task.CompletedTask;
 
-    // Single-level undo of the most recent deletion; cleared on repo change/close.
-    private List<string> _lastDeletedTargets = [];
-    private int _lastDeletedFileCount;
+    private bool _isDiscovering;
+    private bool _isScanning;
+    private bool _isDeleting;
+    private string _statusMessage = UserMessages.Welcome;
+    private LastDeletion? _undoableDeletion;
 
     public MainViewModel(
         IRepositoryDiscoveryService discovery,
@@ -44,6 +50,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         IConfirmationDialog confirmation,
         IUserGuideService userGuide)
     {
+        ArgumentNullException.ThrowIfNull(discovery);
+        ArgumentNullException.ThrowIfNull(folderPicker);
+        ArgumentNullException.ThrowIfNull(scanner);
+        ArgumentNullException.ThrowIfNull(deletion);
+        ArgumentNullException.ThrowIfNull(confirmation);
+        ArgumentNullException.ThrowIfNull(userGuide);
+
         _discovery = discovery;
         _folderPicker = folderPicker;
         _scanner = scanner;
@@ -51,80 +64,91 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _confirmation = confirmation;
         _userGuide = userGuide;
 
+        Repositories = new ReadOnlyObservableCollection<RepositoryInfo>(_repositories);
+        RootNodes = new ReadOnlyObservableCollection<FolderNodeViewModel>(_rootNodes);
+
         Selection.PropertyChanged += OnSelectionChanged;
     }
 
-    private void OnSelectionChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        if (e.PropertyName is nameof(SelectionTracker.HasSelection))
-        {
-            DeleteSelectedCommand.NotifyCanExecuteChanged();
-        }
-    }
+    #region State
+
+    public string Title { get; } = "GitClear";
 
     /// <summary>Repositories found under <see cref="RootPath"/>, in discovery order.</summary>
-    public ObservableCollection<RepositoryInfo> Repositories { get; } = [];
+    public ReadOnlyObservableCollection<RepositoryInfo> Repositories { get; }
 
-    /// <summary>Top of the ignored-file tree (a single repo-root node) for the tree view.</summary>
-    public ObservableCollection<FolderNodeViewModel> RootNodes { get; } = [];
+    /// <summary>Top of the ignored-file tree (a single repository-root node) for the tree view.</summary>
+    public ReadOnlyObservableCollection<FolderNodeViewModel> RootNodes { get; }
 
     /// <summary>Running total of checked items for deletion (UI-3).</summary>
     public SelectionTracker Selection { get; } = new();
-
-    /// <summary>The folder whose files are shown in the right-hand list (bound from the tree).</summary>
-    [ObservableProperty]
-    private FolderNodeViewModel? _selectedFolder;
-
-    [ObservableProperty]
-    private string _title = "GitClear";
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(FindRepositoriesCommand))]
     private string? _rootPath;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsBusy))]
-    [NotifyCanExecuteChangedFor(nameof(FindRepositoriesCommand))]
-    [NotifyCanExecuteChangedFor(nameof(StopCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedCommand))]
-    [NotifyCanExecuteChangedFor(nameof(UndoCommand))]
-    private bool _isDiscovering;
-
-    [ObservableProperty]
     private RepositoryInfo? _selectedRepository;
 
+    /// <summary>The folder whose files are shown in the right-hand list (bound from the tree).</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsBusy))]
-    [NotifyCanExecuteChangedFor(nameof(StopCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedCommand))]
-    [NotifyCanExecuteChangedFor(nameof(UndoCommand))]
-    private bool _isScanning;
+    private FolderNodeViewModel? _selectedFolder;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsBusy))]
-    [NotifyCanExecuteChangedFor(nameof(FindRepositoriesCommand))]
-    [NotifyCanExecuteChangedFor(nameof(StopCommand))]
-    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedCommand))]
-    [NotifyCanExecuteChangedFor(nameof(UndoCommand))]
-    private bool _isDeleting;
+    public bool IsDiscovering
+    {
+        get => _isDiscovering;
+        private set => SetActivity(ref _isDiscovering, value);
+    }
+
+    public bool IsScanning
+    {
+        get => _isScanning;
+        private set => SetActivity(ref _isScanning, value);
+    }
+
+    /// <summary>True while deleting or restoring.</summary>
+    public bool IsDeleting
+    {
+        get => _isDeleting;
+        private set => SetActivity(ref _isDeleting, value);
+    }
 
     /// <summary>True while any long-running operation (discovery, scan, delete) is active.</summary>
     public bool IsBusy => IsDiscovering || IsScanning || IsDeleting;
 
-    /// <summary>Result of the most recent scan; consumed by the tree UI.</summary>
-    [ObservableProperty]
-    private IgnoredScanResult? _scanResult;
+    public string StatusMessage
+    {
+        get => _statusMessage;
+        private set => SetProperty(ref _statusMessage, value);
+    }
 
-    [ObservableProperty]
-    private string _statusMessage = "Select a folder to scan for Git repositories.";
+    /// <summary>
+    /// Sets one of the busy flags. Every command's availability, and
+    /// <see cref="IsBusy"/>, depend on them.
+    /// </summary>
+    private void SetActivity(ref bool flag, bool value, [CallerMemberName] string? propertyName = null)
+    {
+        if (!SetProperty(ref flag, value, propertyName))
+        {
+            return;
+        }
 
-    // ---- Discovery --------------------------------------------------------
+        OnPropertyChanged(nameof(IsBusy));
+        FindRepositoriesCommand.NotifyCanExecuteChanged();
+        StopCommand.NotifyCanExecuteChanged();
+        DeleteSelectedCommand.NotifyCanExecuteChanged();
+        UndoCommand.NotifyCanExecuteChanged();
+    }
+
+    #endregion
+
+    #region Discovery
 
     /// <summary>Opens the folder picker and, if a folder is chosen, searches it.</summary>
     [RelayCommand]
     private async Task BrowseForFolderAsync()
     {
-        var picked = _folderPicker.PickFolder(RootPath);
+        string? picked = _folderPicker.PickFolder(RootPath);
         if (picked is null)
         {
             return;
@@ -137,117 +161,101 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private bool CanFindRepositories() =>
-        !IsDiscovering && !IsDeleting && !string.IsNullOrWhiteSpace(RootPath);
+    private bool CanFindRepositories() => !IsDiscovering && !IsDeleting && !string.IsNullOrWhiteSpace(RootPath);
 
     [RelayCommand(CanExecute = nameof(CanFindRepositories))]
     private async Task FindRepositoriesAsync()
     {
-        Repositories.Clear();
+        _repositories.Clear();
         SelectedRepository = null;
 
-        _discoveryCts = new CancellationTokenSource();
+        CancellationTokenSource cancellation = new();
+        _discoveryCancellation = cancellation;
         IsDiscovering = true;
-        StatusMessage = "Searching for Git repositories…";
+        StatusMessage = UserMessages.Searching;
 
         try
         {
-            await foreach (var repo in _discovery.DiscoverAsync(RootPath!, _discoveryCts.Token))
+            await foreach (RepositoryInfo repository in _discovery.DiscoverAsync(RootPath!, cancellation.Token))
             {
-                Repositories.Add(repo);
-                StatusMessage = DescribeDiscovery(Repositories.Count, searching: true);
+                _repositories.Add(repository);
+                StatusMessage = UserMessages.Found(_repositories.Count, stillSearching: true);
             }
 
-            StatusMessage = Repositories.Count == 0
-                ? "No Git repositories found under the selected folder."
-                : DescribeDiscovery(Repositories.Count, searching: false);
+            StatusMessage = _repositories.Count == 0
+                ? UserMessages.NoRepositoriesFound
+                : UserMessages.Found(_repositories.Count, stillSearching: false);
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = $"Search cancelled — {DescribeDiscovery(Repositories.Count, searching: false)}";
+            StatusMessage = UserMessages.SearchCancelled(_repositories.Count);
         }
 #pragma warning disable CA1031 // UI-boundary safety net: never let discovery fail silently.
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            StatusMessage = $"Could not search that folder: {ex.Message}";
+            StatusMessage = UserMessages.SearchFailed(exception.Message);
         }
 #pragma warning restore CA1031
         finally
         {
+            _discoveryCancellation = null;
+            cancellation.Dispose();
             IsDiscovering = false;
-            _discoveryCts.Dispose();
-            _discoveryCts = null;
         }
     }
 
-    // ---- Stop (unified cancel) --------------------------------------------
+    #endregion
 
-    private bool CanStop() => IsDiscovering || IsScanning || IsDeleting;
+    #region Stop
+
+    private bool CanStop() => IsBusy;
 
     [RelayCommand(CanExecute = nameof(CanStop))]
     private void Stop()
     {
-        _discoveryCts?.Cancel();
-        _scanCts?.Cancel();
-        _deleteCts?.Cancel();
+        _discoveryCancellation?.Cancel();
+        _scanCancellation?.Cancel();
+        _deleteCancellation?.Cancel();
     }
 
-    // ---- Scan -------------------------------------------------------------
+    #endregion
+
+    #region Scan
 
     /// <summary>The in-flight (or last) scan task. Exposed for tests to await.</summary>
     internal Task ActiveScan => _activeScan;
 
     partial void OnSelectedRepositoryChanged(RepositoryInfo? value)
     {
-        ClearUndo(); // Undo is forgotten when the repository changes.
+        UndoableDeletion = null; // Undo is forgotten when the repository changes (DEL-4).
         _activeScan = ScanRepositoryAsync(value);
-    }
-
-    partial void OnScanResultChanged(IgnoredScanResult? value)
-    {
-        RootNodes.Clear();
-        SelectedFolder = null;
-        Selection.Reset();
-
-        // Nothing ignored → leave the tree empty; the status line explains why.
-        if (value is null || value.TotalFileCount == 0)
-        {
-            return;
-        }
-
-        var root = new FolderNodeViewModel(value.Root, Selection) { IsExpanded = true };
-        RootNodes.Add(root);
-
-        // Show the repo root's files immediately and highlight it in the tree.
-        SelectedFolder = root;
-        root.IsSelected = true;
     }
 
     private async Task ScanRepositoryAsync(RepositoryInfo? repository)
     {
         // Supersede any in-flight scan; the superseded call will observe cancellation.
-        _scanCts?.Cancel();
+        _scanCancellation?.Cancel();
 
-        ScanResult = null;
+        ShowTree(null);
 
         if (repository is null)
         {
             return;
         }
 
-        var cts = new CancellationTokenSource();
-        _scanCts = cts;
+        CancellationTokenSource cancellation = new();
+        _scanCancellation = cancellation;
         IsScanning = true;
-        StatusMessage = $"Scanning “{repository.Name}” for ignored files…";
+        StatusMessage = UserMessages.Scanning(repository.Name);
 
         try
         {
             // No progress→status coupling: progress callbacks are delivered
             // asynchronously and could clobber a later status. The busy bar
             // signals activity instead.
-            var result = await _scanner.ScanAsync(repository.FullPath, progress: null, cts.Token);
-            ScanResult = result;
-            StatusMessage = DescribeScan(result);
+            IgnoredScanResult result = await _scanner.ScanAsync(repository.FullPath, progress: null, cancellation.Token);
+            ShowTree(result);
+            StatusMessage = UserMessages.ScanSummary(result);
         }
         catch (OperationCanceledException)
         {
@@ -255,156 +263,181 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         catch (GitNotFoundException)
         {
-            StatusMessage = "Git was not found on your PATH. Install Git to scan repositories.";
+            StatusMessage = UserMessages.GitNotFound;
         }
-        catch (GitCommandException ex)
+        catch (GitCommandException exception)
         {
-            // Show git's own diagnostic so the user needn't re-run git themselves.
-            string detail = FlattenForStatus(ex.StandardError);
-            StatusMessage = detail.Length == 0
-                ? $"Git could not scan this repository (git exit code {ex.ExitCode})."
-                : $"Git could not scan this repository. Git says: {detail}";
+            StatusMessage = UserMessages.GitFailed(exception.ExitCode, exception.StandardError);
         }
 #pragma warning disable CA1031 // UI-boundary safety net: fire-and-forget scan must never fault unobserved.
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            StatusMessage = $"Could not scan this repository: {ex.Message}";
+            StatusMessage = UserMessages.ScanFailed(exception.Message);
         }
 #pragma warning restore CA1031
         finally
         {
-            if (ReferenceEquals(cts, _scanCts))
+            // A superseded scan leaves the flag and field to the scan that replaced it.
+            if (ReferenceEquals(cancellation, _scanCancellation))
             {
+                _scanCancellation = null;
                 IsScanning = false;
-                _scanCts = null;
             }
 
-            cts.Dispose();
+            cancellation.Dispose();
         }
     }
 
-    // ---- Deletion ---------------------------------------------------------
-
-    private bool CanDeleteSelected() =>
-        Selection.HasSelection && !IsDeleting && !IsScanning && !IsDiscovering;
-
-    [RelayCommand(CanExecute = nameof(CanDeleteSelected))]
-    private async Task DeleteSelectedAsync()
+    /// <summary>Replaces the tree with the given scan's; empty when nothing is ignored.</summary>
+    private void ShowTree(IgnoredScanResult? result)
     {
-        var repository = SelectedRepository;
-        if (repository is null || RootNodes.Count == 0)
+        _rootNodes.Clear();
+        SelectedFolder = null;
+        Selection.Reset();
+
+        // Nothing ignored → leave the tree empty; the status line explains why.
+        if (result is null || result.TotalFileCount == 0)
         {
             return;
         }
 
-        var targets = RootNodes[0].EnumerateDeletionTargets().ToList();
+        FolderNodeViewModel root = new(result.Root, Selection) { IsExpanded = true };
+        _rootNodes.Add(root);
+
+        // Show the repository root's files immediately and highlight it in the tree.
+        SelectedFolder = root;
+        root.IsSelected = true;
+    }
+
+    #endregion
+
+    #region Deletion
+
+    private void OnSelectionChanged(object? sender, PropertyChangedEventArgs eventArgs)
+    {
+        if (eventArgs.PropertyName is nameof(SelectionTracker.HasSelection))
+        {
+            DeleteSelectedCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private bool CanDeleteSelected() => Selection.HasSelection && !IsBusy;
+
+    [RelayCommand(CanExecute = nameof(CanDeleteSelected))]
+    private async Task DeleteSelectedAsync()
+    {
+        RepositoryInfo? repository = SelectedRepository;
+        if (repository is null || _rootNodes.Count == 0)
+        {
+            return;
+        }
+
+        List<string> targets = [.. _rootNodes[0].EnumerateDeletionTargets()];
         if (targets.Count == 0)
         {
             return;
         }
 
-        var fileCount = Selection.SelectedFileCount;
-        var noun = fileCount == 1 ? "file" : "files";
-
-        var confirmed = _confirmation.Confirm(
-            "Move to Recycle Bin",
-            $"Move {fileCount:N0} ignored {noun} ({Selection.FormattedSelectedSize}) to the Recycle Bin?\n\n" +
-            "You can restore them with Undo, or from the Recycle Bin.");
+        int fileCount = Selection.SelectedFileCount;
+        bool confirmed = _confirmation.Confirm(
+            UserMessages.ConfirmDeletionTitle,
+            UserMessages.ConfirmDeletion(fileCount, Selection.FormattedSelectedSize));
         if (!confirmed)
         {
             return;
         }
 
-        _deleteCts = new CancellationTokenSource();
+        CancellationTokenSource cancellation = new();
+        _deleteCancellation = cancellation;
         IsDeleting = true;
-        StatusMessage = $"Moving {fileCount:N0} {noun} to the Recycle Bin…";
+        StatusMessage = UserMessages.Moving(fileCount);
 
         try
         {
-            DeletionResult result = await _deletion.DeleteAsync(targets, _deleteCts.Token);
+            DeletionResult result = await _deletion.DeleteAsync(targets, cancellation.Token);
 
             // Even a declined permanent-delete warning (DEL-5) may leave earlier
             // targets already recycled, so record Undo and refresh either way.
-            _lastDeletedTargets = targets;
-            _lastDeletedFileCount = fileCount;
-            UndoCommand.NotifyCanExecuteChanged();
+            UndoableDeletion = new LastDeletion(targets, fileCount);
 
             // Refresh so the tree reflects reality and the selection resets (DEL-3).
             await ScanRepositoryAsync(repository);
 
-            StatusMessage = result.Aborted
-                ? "Deletion stopped — nothing was permanently deleted. Anything already "
-                  + "moved to the Recycle Bin can be restored with Undo."
-                : $"Moved {fileCount:N0} {noun} to the Recycle Bin. Use Undo to restore.";
+            StatusMessage = result.Aborted ? UserMessages.DeletionAborted : UserMessages.Moved(fileCount);
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "Deletion cancelled.";
+            StatusMessage = UserMessages.DeletionCancelled;
         }
-        catch (DeletionException ex)
+        catch (DeletionException exception)
         {
-            StatusMessage = $"Some items could not be deleted: {ex.Message}";
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            StatusMessage = $"Deletion failed: {ex.Message}";
+            StatusMessage = UserMessages.DeletionPartlyFailed(exception.Message);
         }
 #pragma warning disable CA1031 // UI-boundary safety net: never let deletion fail silently.
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            StatusMessage = $"Deletion failed: {ex.Message}";
+            StatusMessage = UserMessages.DeletionFailed(exception.Message);
         }
 #pragma warning restore CA1031
         finally
         {
-            _deleteCts?.Dispose();
-            _deleteCts = null;
+            _deleteCancellation = null;
+            cancellation.Dispose();
             IsDeleting = false;
         }
     }
 
-    // ---- Undo -------------------------------------------------------------
+    #endregion
 
-    private bool CanUndo() =>
-        _lastDeletedTargets.Count > 0 && !IsDeleting && !IsScanning && !IsDiscovering;
+    #region Undo
+
+    /// <summary>
+    /// The most recent deletion, for single-level Undo (DEL-4); <c>null</c> once
+    /// it has been undone or forgotten.
+    /// </summary>
+    private LastDeletion? UndoableDeletion
+    {
+        get => _undoableDeletion;
+        set
+        {
+            _undoableDeletion = value;
+            UndoCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    private bool CanUndo() => UndoableDeletion is not null && !IsBusy;
 
     [RelayCommand(CanExecute = nameof(CanUndo))]
     private async Task UndoAsync()
     {
-        var targets = _lastDeletedTargets;
-        var fileCount = _lastDeletedFileCount;
-        if (targets.Count == 0)
+        LastDeletion? deletion = UndoableDeletion;
+        if (deletion is null)
         {
             return;
         }
 
-        var repository = SelectedRepository;
+        RepositoryInfo? repository = SelectedRepository;
         IsDeleting = true;
-        StatusMessage = "Restoring from the Recycle Bin…";
+        StatusMessage = UserMessages.Restoring;
 
         try
         {
-            var restored = await _deletion.RestoreAsync(targets);
-            ClearUndo();
+            int restored = await _deletion.RestoreAsync(deletion.Targets);
+            UndoableDeletion = null;
 
             if (repository is not null)
             {
                 await ScanRepositoryAsync(repository);
             }
 
-            var noun = fileCount == 1 ? "file" : "files";
             StatusMessage = restored > 0
-                ? $"Restored {fileCount:N0} {noun} from the Recycle Bin."
-                : "Nothing could be restored automatically — check the Recycle Bin.";
-        }
-        catch (DeletionException ex)
-        {
-            StatusMessage = $"Undo failed: {ex.Message}";
+                ? UserMessages.Restored(deletion.FileCount)
+                : UserMessages.NothingRestored;
         }
 #pragma warning disable CA1031 // UI-boundary safety net: never let undo fail silently.
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            StatusMessage = $"Undo failed: {ex.Message}";
+            StatusMessage = UserMessages.UndoFailed(exception.Message);
         }
 #pragma warning restore CA1031
         finally
@@ -413,17 +446,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void ClearUndo()
-    {
-        if (_lastDeletedTargets.Count == 0)
-        {
-            return;
-        }
+    /// <summary>What Undo needs: the targets that were recycled and how many files they held.</summary>
+    private sealed record LastDeletion(IReadOnlyList<string> Targets, int FileCount);
 
-        _lastDeletedTargets = [];
-        _lastDeletedFileCount = 0;
-        UndoCommand.NotifyCanExecuteChanged();
-    }
+    #endregion
+
+    #region User guide
 
     /// <summary>Opens the user guide for the current UI culture (UI-5).</summary>
     [RelayCommand]
@@ -431,63 +459,19 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         if (!_userGuide.TryOpen())
         {
-            StatusMessage = "Could not open the user guide. It may be missing from the "
-                + "installation folder, or no PDF viewer is registered.";
+            StatusMessage = UserMessages.UserGuideUnavailable;
         }
     }
 
-    // ---- Helpers ----------------------------------------------------------
+    #endregion
 
     /// <summary>
-    /// Squeezes a multi-line tool diagnostic onto the single-line status bar:
-    /// newlines and runs of whitespace become single spaces, and very long output
-    /// is clipped so the message stays readable.
+    /// Undoes the constructor's subscription and asks any running operation to
+    /// stop; each operation disposes its own cancellation source as it ends.
     /// </summary>
-    private static string FlattenForStatus(string? text)
-    {
-        const int MaxLength = 300;
-
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return string.Empty;
-        }
-
-        string flattened = string.Join(' ', text.Split(
-            (char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-
-        return flattened.Length <= MaxLength
-            ? flattened
-            : string.Concat(flattened.AsSpan(0, MaxLength), "…");
-    }
-
-    private static string DescribeDiscovery(int count, bool searching)
-    {
-        var noun = count == 1 ? "repository" : "repositories";
-        return searching ? $"Found {count} {noun}…" : $"Found {count} {noun}.";
-    }
-
-    private static string DescribeScan(IgnoredScanResult result)
-    {
-        if (result.TotalFileCount == 0)
-        {
-            return "No ignored files found in this repository.";
-        }
-
-        var files = result.TotalFileCount == 1 ? "file" : "files";
-        var unreadable = result.UnreadableFileCount > 0
-            ? $" · {result.UnreadableFileCount} unreadable"
-            : string.Empty;
-        return $"{result.TotalFileCount:N0} ignored {files} · {ByteSize.Format(result.TotalSize)}{unreadable}";
-    }
-
     public void Dispose()
     {
         Selection.PropertyChanged -= OnSelectionChanged;
-        _discoveryCts?.Dispose();
-        _discoveryCts = null;
-        _scanCts?.Dispose();
-        _scanCts = null;
-        _deleteCts?.Dispose();
-        _deleteCts = null;
+        Stop();
     }
 }

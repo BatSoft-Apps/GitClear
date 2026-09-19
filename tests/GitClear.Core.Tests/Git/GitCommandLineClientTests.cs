@@ -5,23 +5,23 @@ namespace GitClear.Core.Tests.Git;
 
 public sealed class GitCommandLineClientTests
 {
-    private readonly GitCommandLineClient _sut = new();
+    private readonly GitCommandLineClient _client = new();
 
     [Fact]
-    public async Task Lists_ignored_entries_honoring_nested_gitignore_and_collapsing_whole_dirs()
+    public async Task Lists_ignored_entries_honoring_nested_gitignore_and_collapsing_whole_directories()
     {
-        using var repo = new TempGitRepo();
-        repo.WriteText(".gitignore", "*.log\nbuild/\n");
-        repo.WriteText("app.log", "ignored");
-        repo.WriteText("build/out.bin", "ignored");
-        repo.WriteText("nested/.gitignore", "*.tmp\n");
-        repo.WriteText("nested/a.tmp", "ignored");
-        repo.WriteText("tracked.txt", "tracked");
-        repo.StageAndCommit(".gitignore", "tracked.txt", "nested/.gitignore");
+        using TemporaryGitRepository repository = new();
+        repository.WriteText(".gitignore", "*.log\nbuild/\n");
+        repository.WriteText("app.log", "ignored");
+        repository.WriteText("build/out.bin", "ignored");
+        repository.WriteText("nested/.gitignore", "*.tmp\n");
+        repository.WriteText("nested/a.tmp", "ignored");
+        repository.WriteText("tracked.txt", "tracked");
+        repository.StageAndCommit(".gitignore", "tracked.txt", "nested/.gitignore");
 
-        var paths = await _sut.GetIgnoredPathsAsync(repo.Path);
+        IReadOnlyList<string> paths = await _client.GetIgnoredPathsAsync(repository.Path);
 
-        // git reports '/'-separated, repo-relative paths.
+        // git reports '/'-separated, repository-relative paths.
         Assert.Contains("app.log", paths);
         // --directory collapses the wholly-ignored build/ folder to one entry (trailing slash).
         Assert.Contains("build/", paths);
@@ -35,10 +35,10 @@ public sealed class GitCommandLineClientTests
     [Fact]
     public async Task Returns_empty_when_nothing_is_ignored()
     {
-        using var repo = new TempGitRepo();
-        repo.WriteText("readme.txt", "not ignored, just untracked");
+        using TemporaryGitRepository repository = new();
+        repository.WriteText("readme.txt", "not ignored, just untracked");
 
-        var paths = await _sut.GetIgnoredPathsAsync(repo.Path);
+        IReadOnlyList<string> paths = await _client.GetIgnoredPathsAsync(repository.Path);
 
         Assert.Empty(paths);
     }
@@ -46,6 +46,6 @@ public sealed class GitCommandLineClientTests
     [Fact]
     public async Task Throws_when_path_is_blank()
     {
-        await Assert.ThrowsAnyAsync<ArgumentException>(() => _sut.GetIgnoredPathsAsync("  "));
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => _client.GetIgnoredPathsAsync("  "));
     }
 }

@@ -23,7 +23,7 @@ public sealed class RepositoryDiscoveryService : IRepositoryDiscoveryService
             throw new DirectoryNotFoundException($"Folder not found: {rootPath}");
         }
 
-        var channel = Channel.CreateUnbounded<RepositoryInfo>(new UnboundedChannelOptions
+        Channel<RepositoryInfo> channel = Channel.CreateUnbounded<RepositoryInfo>(new UnboundedChannelOptions
         {
             SingleReader = true,
             SingleWriter = true,
@@ -31,25 +31,25 @@ public sealed class RepositoryDiscoveryService : IRepositoryDiscoveryService
 
         // Produce on a background thread; the try/catch guarantees the channel is
         // always completed so the reader below can never hang.
-        var walk = Task.Run(() =>
+        Task walk = Task.Run(() =>
         {
             try
             {
                 Walk(rootPath, channel.Writer, cancellationToken);
                 channel.Writer.Complete();
             }
-            catch (Exception ex)
+            catch (Exception exception)
             {
-                channel.Writer.Complete(ex);
+                channel.Writer.Complete(exception);
             }
         }, cancellationToken);
 
-        await foreach (var repo in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        await foreach (RepositoryInfo repository in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
         {
-            yield return repo;
+            yield return repository;
         }
 
-        // Surfaces any non-cancellation fault captured by Complete(ex).
+        // Surfaces any non-cancellation fault captured by Complete(exception).
         await walk.ConfigureAwait(false);
     }
 
@@ -58,43 +58,43 @@ public sealed class RepositoryDiscoveryService : IRepositoryDiscoveryService
         ChannelWriter<RepositoryInfo> writer,
         CancellationToken cancellationToken)
     {
-        var stack = new Stack<DirectoryInfo>();
+        Stack<DirectoryInfo> stack = new();
         stack.Push(new DirectoryInfo(rootPath));
 
         while (stack.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var dir = stack.Pop();
+            DirectoryInfo directory = stack.Pop();
 
-            if (TryGetGitEntry(dir, out var gitIsFile))
+            if (TryGetGitEntry(directory, out bool gitIsFile))
             {
-                writer.TryWrite(RepositoryInfo.Create(dir.FullName, gitIsFile));
+                writer.TryWrite(new RepositoryInfo(directory.FullName, gitIsFile));
                 continue; // DISC-2: do not descend into a discovered repository.
             }
 
             try
             {
-                foreach (var sub in dir.EnumerateDirectories())
+                foreach (DirectoryInfo subdirectory in directory.EnumerateDirectories())
                 {
                     // Skip symlinks/junctions to avoid cycles and escaping the tree.
-                    if ((sub.Attributes & FileAttributes.ReparsePoint) != 0)
+                    if ((subdirectory.Attributes & FileAttributes.ReparsePoint) != 0)
                     {
                         continue;
                     }
 
-                    stack.Push(sub);
+                    stack.Push(subdirectory);
                 }
             }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or DirectoryNotFoundException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 // Unreadable directory (permissions, deleted mid-walk) — skip it.
             }
         }
     }
 
-    private static bool TryGetGitEntry(DirectoryInfo dir, out bool isFile)
+    private static bool TryGetGitEntry(DirectoryInfo directory, out bool isFile)
     {
-        var gitPath = Path.Combine(dir.FullName, GitEntryName);
+        string gitPath = Path.Combine(directory.FullName, GitEntryName);
 
         if (Directory.Exists(gitPath))
         {

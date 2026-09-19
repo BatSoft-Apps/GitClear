@@ -21,24 +21,32 @@ public partial class App : Application
         base.OnStartup(e);
 
         // Last-resort handler so an unexpected UI-thread error surfaces a message
-        // instead of crashing the app.
+        // instead of crashing the app. Removed again in OnExit.
         DispatcherUnhandledException += OnDispatcherUnhandledException;
 
-        var services = new ServiceCollection();
+        ServiceCollection services = new();
         ConfigureServices(services);
         _services = services.BuildServiceProvider();
 
         _services.GetRequiredService<MainWindow>().Show();
     }
 
-    private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
+    protected override void OnExit(ExitEventArgs e)
+    {
+        // Disposes the singletons the container created, the main view model included.
+        _services?.Dispose();
+        DispatcherUnhandledException -= OnDispatcherUnhandledException;
+        base.OnExit(e);
+    }
+
+    private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs eventArgs)
     {
         MessageBox.Show(
-            $"An unexpected error occurred:\n\n{e.Exception.Message}",
+            $"An unexpected error occurred:\n\n{eventArgs.Exception.Message}",
             "GitClear",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
-        e.Handled = true;
+        eventArgs.Handled = true;
     }
 
     private static void ConfigureServices(IServiceCollection services)
@@ -56,11 +64,5 @@ public partial class App : Application
 
         // Views.
         services.AddSingleton<MainWindow>();
-    }
-
-    protected override void OnExit(ExitEventArgs e)
-    {
-        _services?.Dispose();
-        base.OnExit(e);
     }
 }

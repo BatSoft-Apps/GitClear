@@ -20,7 +20,7 @@ public sealed class GitCommandLineClient : IGitClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryPath);
 
-        var startInfo = new ProcessStartInfo
+        ProcessStartInfo startInfo = new()
         {
             FileName = "git",
             WorkingDirectory = repositoryPath,
@@ -31,31 +31,31 @@ public sealed class GitCommandLineClient : IGitClient
             StandardErrorEncoding = Encoding.UTF8,
         };
 
-        foreach (var arg in IgnoredFilesArguments)
+        foreach (string argument in IgnoredFilesArguments)
         {
-            startInfo.ArgumentList.Add(arg);
+            startInfo.ArgumentList.Add(argument);
         }
 
-        using var process = new Process { StartInfo = startInfo };
+        using Process process = new() { StartInfo = startInfo };
 
         try
         {
             process.Start();
         }
-        catch (Win32Exception ex)
+        catch (Win32Exception exception)
         {
             throw new GitNotFoundException(
-                "Git could not be started. Ensure git is installed and on your PATH.", ex);
+                "Git could not be started. Ensure git is installed and on your PATH.", exception);
         }
 
-        // Read stdout as raw bytes: with -z, paths are NUL-separated raw UTF-8.
-        using var stdout = new MemoryStream();
-        var readStdout = process.StandardOutput.BaseStream.CopyToAsync(stdout, cancellationToken);
-        var readStderr = process.StandardError.ReadToEndAsync(cancellationToken);
+        // Read standard output as raw bytes: with -z, paths are NUL-separated raw UTF-8.
+        using MemoryStream standardOutput = new();
+        Task readStandardOutput = process.StandardOutput.BaseStream.CopyToAsync(standardOutput, cancellationToken);
+        Task<string> readStandardError = process.StandardError.ReadToEndAsync(cancellationToken);
 
         try
         {
-            await Task.WhenAll(readStdout, readStderr, process.WaitForExitAsync(cancellationToken))
+            await Task.WhenAll(readStandardOutput, readStandardError, process.WaitForExitAsync(cancellationToken))
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -66,22 +66,22 @@ public sealed class GitCommandLineClient : IGitClient
 
         if (process.ExitCode != 0)
         {
-            string standardError = (await readStderr.ConfigureAwait(false)).Trim();
+            string standardError = (await readStandardError.ConfigureAwait(false)).Trim();
             throw new GitCommandException(
                 $"git ls-files failed (exit code {process.ExitCode}): {standardError}",
                 process.ExitCode,
                 standardError);
         }
 
-        return ParseNulSeparated(stdout.ToArray());
+        return ParseNulSeparated(standardOutput.ToArray());
     }
 
     private static List<string> ParseNulSeparated(byte[] bytes)
     {
-        var result = new List<string>();
-        var start = 0;
+        List<string> result = new();
+        int start = 0;
 
-        for (var i = 0; i < bytes.Length; i++)
+        for (int i = 0; i < bytes.Length; i++)
         {
             if (bytes[i] != 0)
             {

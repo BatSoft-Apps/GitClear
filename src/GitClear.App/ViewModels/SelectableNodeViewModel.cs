@@ -10,14 +10,14 @@ namespace GitClear.App.ViewModels;
 /// </summary>
 public abstract class SelectableNodeViewModel : ObservableObject
 {
+    private readonly SelectableNodeViewModel? _parent;
     private bool? _isChecked = false;
 
-    protected SelectableNodeViewModel(SelectableNodeViewModel? parent) => Parent = parent;
-
-    private SelectableNodeViewModel? Parent { get; }
-
-    /// <summary>Nodes that participate in check propagation (subfolders + files); empty for a leaf.</summary>
-    protected abstract IReadOnlyList<SelectableNodeViewModel> CheckableChildren { get; }
+    /// <param name="parent">The containing node; <c>null</c> for the root.</param>
+    protected SelectableNodeViewModel(SelectableNodeViewModel? parent)
+    {
+        _parent = parent;
+    }
 
     /// <summary>
     /// Tri-state checkbox value. <c>true</c> = all selected, <c>false</c> = none,
@@ -27,6 +27,14 @@ public abstract class SelectableNodeViewModel : ObservableObject
     {
         get => _isChecked;
         set => SetIsChecked(value, updateChildren: true, updateParent: true);
+    }
+
+    /// <summary>Nodes that participate in check propagation (subfolders + files); empty for a leaf.</summary>
+    protected abstract IReadOnlyList<SelectableNodeViewModel> CheckableChildren { get; }
+
+    /// <summary>Hook called after this node's checked state actually changes.</summary>
+    protected virtual void OnCheckedChanged()
+    {
     }
 
     private void SetIsChecked(bool? value, bool updateChildren, bool updateParent)
@@ -40,7 +48,7 @@ public abstract class SelectableNodeViewModel : ObservableObject
 
         if (updateChildren && _isChecked.HasValue)
         {
-            foreach (var child in CheckableChildren)
+            foreach (SelectableNodeViewModel child in CheckableChildren)
             {
                 child.SetIsChecked(_isChecked, updateChildren: true, updateParent: false);
             }
@@ -48,21 +56,22 @@ public abstract class SelectableNodeViewModel : ObservableObject
 
         if (updateParent)
         {
-            Parent?.VerifyCheckState();
+            _parent?.UpdateFromChildren();
         }
 
         OnPropertyChanged(nameof(IsChecked));
         OnCheckedChanged();
     }
 
-    private void VerifyCheckState()
+    /// <summary>Derives this node's state from its children: all alike → that state, else indeterminate.</summary>
+    private void UpdateFromChildren()
     {
         bool? state = null;
-        var children = CheckableChildren;
+        IReadOnlyList<SelectableNodeViewModel> children = CheckableChildren;
 
-        for (var i = 0; i < children.Count; i++)
+        for (int i = 0; i < children.Count; i++)
         {
-            var current = children[i].IsChecked;
+            bool? current = children[i].IsChecked;
             if (i == 0)
             {
                 state = current;
@@ -75,10 +84,5 @@ public abstract class SelectableNodeViewModel : ObservableObject
         }
 
         SetIsChecked(state, updateChildren: false, updateParent: true);
-    }
-
-    /// <summary>Hook called after this node's checked state actually changes.</summary>
-    protected virtual void OnCheckedChanged()
-    {
     }
 }

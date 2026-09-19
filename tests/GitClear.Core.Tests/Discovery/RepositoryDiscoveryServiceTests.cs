@@ -6,29 +6,29 @@ namespace GitClear.Core.Tests.Discovery;
 
 public sealed class RepositoryDiscoveryServiceTests
 {
-    private readonly RepositoryDiscoveryService _sut = new();
+    private readonly RepositoryDiscoveryService _discovery = new();
 
-    private async Task<List<RepositoryInfo>> DiscoverAll(string root, CancellationToken ct = default)
+    private async Task<List<RepositoryInfo>> DiscoverAll(string root, CancellationToken cancellationToken = default)
     {
-        var results = new List<RepositoryInfo>();
-        await foreach (var repo in _sut.DiscoverAsync(root, ct))
+        List<RepositoryInfo> results = [];
+        await foreach (RepositoryInfo repository in _discovery.DiscoverAsync(root, cancellationToken))
         {
-            results.Add(repo);
+            results.Add(repository);
         }
 
         return results;
     }
 
     [Fact]
-    public async Task Finds_a_repo_with_a_dot_git_folder()
+    public async Task Finds_a_repository_with_a_dot_git_folder()
     {
-        using var temp = new TempDirectory();
-        var repo = temp.MakeRepo("project");
+        using TemporaryDirectory directory = new();
+        string repositoryPath = directory.MakeRepository("project");
 
-        var found = await DiscoverAll(temp.Path);
+        List<RepositoryInfo> found = await DiscoverAll(directory.Path);
 
-        var only = Assert.Single(found);
-        Assert.Equal(repo, only.FullPath);
+        RepositoryInfo only = Assert.Single(found);
+        Assert.Equal(repositoryPath, only.FullPath);
         Assert.Equal("project", only.Name);
         Assert.False(only.IsWorktreeOrSubmodule);
     }
@@ -36,64 +36,64 @@ public sealed class RepositoryDiscoveryServiceTests
     [Fact]
     public async Task Detects_a_dot_git_file_as_worktree_or_submodule()
     {
-        using var temp = new TempDirectory();
-        temp.MakeGitFileRepo("worktree");
+        using TemporaryDirectory directory = new();
+        directory.MakeGitFileRepository("worktree");
 
-        var found = await DiscoverAll(temp.Path);
+        List<RepositoryInfo> found = await DiscoverAll(directory.Path);
 
-        var only = Assert.Single(found);
+        RepositoryInfo only = Assert.Single(found);
         Assert.True(only.IsWorktreeOrSubmodule);
     }
 
     [Fact]
-    public async Task Finds_multiple_sibling_repos()
+    public async Task Finds_multiple_sibling_repositories()
     {
-        using var temp = new TempDirectory();
-        temp.MakeRepo("a");
-        temp.MakeRepo("b");
-        temp.MakeRepo("nested", "c");
+        using TemporaryDirectory directory = new();
+        directory.MakeRepository("a");
+        directory.MakeRepository("b");
+        directory.MakeRepository("nested", "c");
 
-        var found = await DiscoverAll(temp.Path);
+        List<RepositoryInfo> found = await DiscoverAll(directory.Path);
 
         Assert.Equal(3, found.Count);
         Assert.Equal(new[] { "a", "b", "c" }, found.Select(r => r.Name).OrderBy(n => n).ToArray());
     }
 
     [Fact]
-    public async Task Does_not_descend_into_a_discovered_repo()
+    public async Task Does_not_descend_into_a_discovered_repository()
     {
-        using var temp = new TempDirectory();
-        var outer = temp.MakeRepo("outer");
-        // A repo nested inside another repo must NOT be surfaced (DISC-2).
+        using TemporaryDirectory directory = new();
+        string outer = directory.MakeRepository("outer");
+        // A repository nested inside another repository must NOT be surfaced (DISC-2).
         Directory.CreateDirectory(Path.Combine(outer, "vendor", "inner"));
         Directory.CreateDirectory(Path.Combine(outer, "vendor", "inner", ".git"));
 
-        var found = await DiscoverAll(temp.Path);
+        List<RepositoryInfo> found = await DiscoverAll(directory.Path);
 
-        var only = Assert.Single(found);
+        RepositoryInfo only = Assert.Single(found);
         Assert.Equal(outer, only.FullPath);
     }
 
     [Fact]
-    public async Task Returns_the_root_itself_when_it_is_a_repo()
+    public async Task Returns_the_root_itself_when_it_is_a_repository()
     {
-        using var temp = new TempDirectory();
-        Directory.CreateDirectory(Path.Combine(temp.Path, ".git"));
+        using TemporaryDirectory directory = new();
+        Directory.CreateDirectory(Path.Combine(directory.Path, ".git"));
 
-        var found = await DiscoverAll(temp.Path);
+        List<RepositoryInfo> found = await DiscoverAll(directory.Path);
 
-        var only = Assert.Single(found);
-        Assert.Equal(temp.Path, only.FullPath);
+        RepositoryInfo only = Assert.Single(found);
+        Assert.Equal(directory.Path, only.FullPath);
     }
 
     [Fact]
-    public async Task Returns_empty_when_no_repos_present()
+    public async Task Returns_empty_when_no_repositories_present()
     {
-        using var temp = new TempDirectory();
-        temp.CreateDir("just", "some", "folders");
-        temp.CreateFile("readme.txt", "no repos here");
+        using TemporaryDirectory directory = new();
+        directory.CreateDirectory("just", "some", "folders");
+        directory.CreateFile("readme.txt", "no repos here");
 
-        var found = await DiscoverAll(temp.Path);
+        List<RepositoryInfo> found = await DiscoverAll(directory.Path);
 
         Assert.Empty(found);
     }
@@ -101,7 +101,7 @@ public sealed class RepositoryDiscoveryServiceTests
     [Fact]
     public async Task Throws_when_root_does_not_exist()
     {
-        var missing = Path.Combine(Path.GetTempPath(), "gitclear-tests", Guid.NewGuid().ToString("N"));
+        string missing = Path.Combine(Path.GetTempPath(), "gitclear-tests", Guid.NewGuid().ToString("N"));
 
         await Assert.ThrowsAsync<DirectoryNotFoundException>(() => DiscoverAll(missing));
     }
@@ -119,11 +119,11 @@ public sealed class RepositoryDiscoveryServiceTests
     [Fact]
     public async Task Cancellation_stops_enumeration()
     {
-        using var temp = new TempDirectory();
-        temp.MakeRepo("a");
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
+        using TemporaryDirectory directory = new();
+        directory.MakeRepository("a");
+        using CancellationTokenSource cancellation = new();
+        cancellation.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => DiscoverAll(temp.Path, cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => DiscoverAll(directory.Path, cancellation.Token));
     }
 }

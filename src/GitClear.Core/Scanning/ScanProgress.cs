@@ -5,5 +5,15 @@ namespace GitClear.Core.Scanning;
 /// up front (git collapses wholly-ignored directories), so only a running count
 /// is reported.
 /// </summary>
-/// <param name="FilesProcessed">Files sized so far.</param>
-public readonly record struct ScanProgress(int FilesProcessed);
+public readonly record struct ScanProgress
+{
+    /// <param name="filesProcessed">Files sized so far.</param>
+    public ScanProgress(int filesProcessed)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(filesProcessed);
+
+        FilesProcessed = filesProcessed;
+    }
+
+    public int FilesProcessed { get; }
+}

@@ -8,35 +8,36 @@ using GitClear.Core.Scanning;
 
 namespace GitClear.App.Tests.TestSupport;
 
-/// <summary>Builds a <see cref="MainViewModel"/> with test doubles for its dependencies.</summary>
-internal static class Sut
+/// <summary>Builds a <see cref="MainViewModel"/>, with a test double for each dependency not given.</summary>
+internal static class MainViewModelFactory
 {
-    public static IgnoredScanResult Result(params IgnoredFileEntry[] entries) => new()
-    {
-        Root = IgnoredTreeBuilder.Build(@"C:\repo", entries),
-        UnreadableFileCount = 0,
-    };
-
-    public static IgnoredScanResult ResultWith(IgnoredFileEntry[] files, IgnoredDirectoryEntry[] directories) => new()
-    {
-        Root = IgnoredTreeBuilder.Build(@"C:\repo", files, directories),
-        UnreadableFileCount = 0,
-    };
-
     public static MainViewModel Create(
         IRepositoryDiscoveryService? discovery = null,
-        IFolderPickerService? picker = null,
+        IFolderPickerService? folderPicker = null,
         IIgnoredFileScanner? scanner = null,
         IDeletionService? deletion = null,
         IConfirmationDialog? confirmation = null,
-        IUserGuideService? userGuide = null) =>
-        new(
+        IUserGuideService? userGuide = null)
+    {
+        return new MainViewModel(
             discovery ?? new FakeDiscovery(),
-            picker ?? new StubFolderPicker(@"C:\root"),
-            scanner ?? new FakeScanner(Result()),
+            folderPicker ?? new StubFolderPicker(@"C:\root"),
+            scanner ?? new FakeScanner(ScanResults.Of()),
             deletion ?? new FakeDeletionService(),
-            confirmation ?? new ConfirmationStub(true),
+            confirmation ?? new StubConfirmation(true),
             userGuide ?? new StubUserGuide());
+    }
+}
+
+/// <summary>Scan results for a repository at <see cref="RepositoryPath"/>.</summary>
+internal static class ScanResults
+{
+    public const string RepositoryPath = @"C:\repo";
+
+    public static IgnoredScanResult Of(params IgnoredFileEntry[] files) => Of(files, []);
+
+    public static IgnoredScanResult Of(IgnoredFileEntry[] files, IgnoredDirectoryEntry[] directories)
+        => new(IgnoredTreeBuilder.Build(RepositoryPath, files, directories), unreadableFileCount: 0);
 }
 
 internal sealed class FakeDiscovery(params RepositoryInfo[] repositories) : IRepositoryDiscoveryService
@@ -45,10 +46,10 @@ internal sealed class FakeDiscovery(params RepositoryInfo[] repositories) : IRep
         string rootPath,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        foreach (var repo in repositories)
+        foreach (RepositoryInfo repository in repositories)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            yield return repo;
+            yield return repository;
             await Task.Yield();
         }
     }
@@ -81,7 +82,7 @@ internal sealed class QueueScanner(params IgnoredScanResult[] results) : IIgnore
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var result = results[Math.Min(_index, results.Length - 1)];
+        IgnoredScanResult result = results[Math.Min(_index, results.Length - 1)];
         _index++;
         progress?.Report(new ScanProgress(1));
         return Task.FromResult(result);
@@ -93,33 +94,32 @@ internal sealed class ThrowingScanner(Exception exception) : IIgnoredFileScanner
     public Task<IgnoredScanResult> ScanAsync(
         string repositoryPath,
         IProgress<ScanProgress>? progress = null,
-        CancellationToken cancellationToken = default) =>
-        Task.FromException<IgnoredScanResult>(exception);
+        CancellationToken cancellationToken = default)
+        => Task.FromException<IgnoredScanResult>(exception);
 }
 
 internal sealed class FakeDeletionService(DeletionResult? result = null, Exception? throwOnDelete = null)
     : IDeletionService
 {
     /// <summary>Models the user declining a permanent-delete warning (DEL-5).</summary>
-    public static FakeDeletionService Aborting()
-        => new(new DeletionResult(0, 0, Aborted: true));
+    public static FakeDeletionService Aborting() => new(new DeletionResult(0, 0, aborted: true));
 
     public List<string> ReceivedPaths { get; } = [];
 
     public List<string> RestoredPaths { get; } = [];
 
     public Task<DeletionResult> DeleteAsync(
-        IReadOnlyCollection<string> filePaths,
+        IReadOnlyCollection<string> targetPaths,
         CancellationToken cancellationToken = default)
     {
-        ReceivedPaths.AddRange(filePaths);
+        ReceivedPaths.AddRange(targetPaths);
 
         if (throwOnDelete is not null)
         {
             return Task.FromException<DeletionResult>(throwOnDelete);
         }
 
-        return Task.FromResult(result ?? new DeletionResult(filePaths.Count, 0));
+        return Task.FromResult(result ?? new DeletionResult(targetPaths.Count, 0));
     }
 
     public Task<int> RestoreAsync(
@@ -131,27 +131,12 @@ internal sealed class FakeDeletionService(DeletionResult? result = null, Excepti
     }
 }
 
-internal sealed class ConfirmationStub(bool result) : IConfirmationDialog
+internal sealed class StubConfirmation(bool answer) : IConfirmationDialog
 {
-    public int Calls { get; private set; }
-
-    public string? LastMessage { get; private set; }
-
-    public bool Confirm(string title, string message)
-    {
-        Calls++;
-        LastMessage = message;
-        return result;
-    }
+    public bool Confirm(string title, string message) => answer;
 }
 
 internal sealed class StubUserGuide(bool opens = true) : IUserGuideService
 {
-    public int Calls { get; private set; }
-
-    public bool TryOpen()
-    {
-        Calls++;
-        return opens;
-    }
+    public bool TryOpen() => opens;
 }

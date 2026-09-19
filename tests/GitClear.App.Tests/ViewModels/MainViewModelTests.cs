@@ -11,76 +11,76 @@ public sealed class MainViewModelTests
     [Fact]
     public async Task Browsing_a_folder_discovers_repositories()
     {
-        var repoA = RepositoryInfo.Create(@"C:\root\a", isWorktreeOrSubmodule: false);
-        var repoB = RepositoryInfo.Create(@"C:\root\b", isWorktreeOrSubmodule: false);
-        var sut = Sut.Create(discovery: new FakeDiscovery(repoA, repoB));
+        RepositoryInfo repositoryA = new RepositoryInfo(@"C:\root\a", isWorktreeOrSubmodule: false);
+        RepositoryInfo repositoryB = new RepositoryInfo(@"C:\root\b", isWorktreeOrSubmodule: false);
+        MainViewModel viewModel = MainViewModelFactory.Create(discovery: new FakeDiscovery(repositoryA, repositoryB));
 
-        await sut.BrowseForFolderCommand.ExecuteAsync(null);
+        await viewModel.BrowseForFolderCommand.ExecuteAsync(null);
 
-        Assert.Equal(@"C:\root", sut.RootPath);
-        Assert.Equal(new[] { repoA, repoB }, sut.Repositories);
-        Assert.Contains("Found 2 repositories", sut.StatusMessage);
+        Assert.Equal(@"C:\root", viewModel.RootPath);
+        Assert.Equal(new[] { repositoryA, repositoryB }, viewModel.Repositories);
+        Assert.Contains("Found 2 repositories", viewModel.StatusMessage);
     }
 
     [Fact]
     public async Task Selecting_a_repository_builds_the_sized_tree()
     {
-        var scanner = new FakeScanner(Sut.Result(
+        FakeScanner scanner = new(ScanResults.Of(
             new IgnoredFileEntry("app.log", 10),
             new IgnoredFileEntry("build/out.bin", 100)));
-        var sut = Sut.Create(scanner: scanner);
+        MainViewModel viewModel = MainViewModelFactory.Create(scanner: scanner);
 
-        sut.SelectedRepository = RepositoryInfo.Create(@"C:\root\a", false);
-        await sut.ActiveScan;
+        viewModel.SelectedRepository = new RepositoryInfo(@"C:\root\a", false);
+        await viewModel.ActiveScan;
 
-        var root = Assert.Single(sut.RootNodes);
+        FolderNodeViewModel root = Assert.Single(viewModel.RootNodes);
         Assert.Equal("110 bytes", root.FormattedSize);
         Assert.Equal(2, root.TotalFileCount);
-        Assert.Contains("2 ignored files", sut.StatusMessage);
+        Assert.Contains("2 ignored files", viewModel.StatusMessage);
     }
 
     [Fact]
     public async Task Scan_selects_the_root_folder_and_exposes_its_files()
     {
-        var scanner = new FakeScanner(Sut.Result(
+        FakeScanner scanner = new(ScanResults.Of(
             new IgnoredFileEntry("app.log", 10),
             new IgnoredFileEntry("build/out.bin", 100)));
-        var sut = Sut.Create(scanner: scanner);
+        MainViewModel viewModel = MainViewModelFactory.Create(scanner: scanner);
 
-        sut.SelectedRepository = RepositoryInfo.Create(@"C:\root\a", false);
-        await sut.ActiveScan;
+        viewModel.SelectedRepository = new RepositoryInfo(@"C:\root\a", false);
+        await viewModel.ActiveScan;
 
-        Assert.NotNull(sut.SelectedFolder);
-        Assert.True(sut.SelectedFolder!.IsSelected);
-        Assert.True(sut.SelectedFolder.IsExpanded);
-        var file = Assert.Single(sut.SelectedFolder.Files);
+        Assert.NotNull(viewModel.SelectedFolder);
+        Assert.True(viewModel.SelectedFolder!.IsSelected);
+        Assert.True(viewModel.SelectedFolder.IsExpanded);
+        FileNodeViewModel file = Assert.Single(viewModel.SelectedFolder.Files);
         Assert.Equal("app.log", file.Name);
-        var subfolder = Assert.Single(sut.SelectedFolder.Subfolders);
+        FolderNodeViewModel subfolder = Assert.Single(viewModel.SelectedFolder.Subfolders);
         Assert.Equal("build", subfolder.Name);
     }
 
     [Fact]
     public async Task A_repository_with_no_ignored_files_reports_so()
     {
-        var sut = Sut.Create(scanner: new FakeScanner(Sut.Result()));
+        MainViewModel viewModel = MainViewModelFactory.Create(scanner: new FakeScanner(ScanResults.Of()));
 
-        sut.SelectedRepository = RepositoryInfo.Create(@"C:\root\a", false);
-        await sut.ActiveScan;
+        viewModel.SelectedRepository = new RepositoryInfo(@"C:\root\a", false);
+        await viewModel.ActiveScan;
 
-        Assert.Empty(sut.RootNodes);
-        Assert.Contains("No ignored files", sut.StatusMessage);
+        Assert.Empty(viewModel.RootNodes);
+        Assert.Contains("No ignored files", viewModel.StatusMessage);
     }
 
     [Fact]
     public async Task Git_not_found_sets_a_helpful_status()
     {
-        var sut = Sut.Create(scanner: new ThrowingScanner(new GitNotFoundException("missing")));
+        MainViewModel viewModel = MainViewModelFactory.Create(scanner: new ThrowingScanner(new GitNotFoundException("missing")));
 
-        sut.SelectedRepository = RepositoryInfo.Create(@"C:\root\a", false);
-        await sut.ActiveScan;
+        viewModel.SelectedRepository = new RepositoryInfo(@"C:\root\a", false);
+        await viewModel.ActiveScan;
 
-        Assert.Empty(sut.RootNodes);
-        Assert.Contains("Git was not found", sut.StatusMessage);
+        Assert.Empty(viewModel.RootNodes);
+        Assert.Contains("Git was not found", viewModel.StatusMessage);
     }
 
     [Fact]
@@ -91,44 +91,44 @@ public sealed class MainViewModelTests
             "git ls-files failed (exit code 128): ...",
             exitCode: 128,
             standardError: "fatal: detected dubious ownership in repository at '//VBoxSvr/Claude/GitClear'\n\n  To add an exception, call:\n\n\tgit config --global --add safe.directory ...");
-        MainViewModel sut = Sut.Create(scanner: new ThrowingScanner(failure));
+        MainViewModel viewModel = MainViewModelFactory.Create(scanner: new ThrowingScanner(failure));
 
-        sut.SelectedRepository = RepositoryInfo.Create(@"C:\root\a", false);
-        await sut.ActiveScan;
+        viewModel.SelectedRepository = new RepositoryInfo(@"C:\root\a", false);
+        await viewModel.ActiveScan;
 
-        Assert.Contains("Git says: fatal: detected dubious ownership", sut.StatusMessage);
-        Assert.DoesNotContain("\n", sut.StatusMessage);
-        Assert.DoesNotContain("\t", sut.StatusMessage);
+        Assert.Contains("Git says: fatal: detected dubious ownership", viewModel.StatusMessage);
+        Assert.DoesNotContain("\n", viewModel.StatusMessage);
+        Assert.DoesNotContain("\t", viewModel.StatusMessage);
         // The user should not be told to go and run git themselves.
-        Assert.DoesNotContain("exit code 128", sut.StatusMessage);
+        Assert.DoesNotContain("exit code 128", viewModel.StatusMessage);
     }
 
     [Fact]
     public async Task A_git_failure_with_no_output_falls_back_to_the_exit_code()
     {
-        MainViewModel sut = Sut.Create(scanner: new ThrowingScanner(
+        MainViewModel viewModel = MainViewModelFactory.Create(scanner: new ThrowingScanner(
             new GitCommandException("failed", exitCode: 9, standardError: "   ")));
 
-        sut.SelectedRepository = RepositoryInfo.Create(@"C:\root\a", false);
-        await sut.ActiveScan;
+        viewModel.SelectedRepository = new RepositoryInfo(@"C:\root\a", false);
+        await viewModel.ActiveScan;
 
-        Assert.Contains("git exit code 9", sut.StatusMessage);
+        Assert.Contains("git exit code 9", viewModel.StatusMessage);
     }
 
     [Fact]
     public async Task Deselecting_a_repository_clears_the_tree()
     {
-        var scanner = new FakeScanner(Sut.Result(new IgnoredFileEntry("app.log", 10)));
-        var sut = Sut.Create(scanner: scanner);
+        FakeScanner scanner = new(ScanResults.Of(new IgnoredFileEntry("app.log", 10)));
+        MainViewModel viewModel = MainViewModelFactory.Create(scanner: scanner);
 
-        sut.SelectedRepository = RepositoryInfo.Create(@"C:\root\a", false);
-        await sut.ActiveScan;
-        Assert.Single(sut.RootNodes);
+        viewModel.SelectedRepository = new RepositoryInfo(@"C:\root\a", false);
+        await viewModel.ActiveScan;
+        Assert.Single(viewModel.RootNodes);
 
-        sut.SelectedRepository = null;
-        await sut.ActiveScan;
+        viewModel.SelectedRepository = null;
+        await viewModel.ActiveScan;
 
-        Assert.Empty(sut.RootNodes);
-        Assert.Null(sut.SelectedFolder);
+        Assert.Empty(viewModel.RootNodes);
+        Assert.Null(viewModel.SelectedFolder);
     }
 }

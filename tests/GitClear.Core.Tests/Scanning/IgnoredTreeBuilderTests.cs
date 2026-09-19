@@ -6,22 +6,22 @@ namespace GitClear.Core.Tests.Scanning;
 public sealed class IgnoredTreeBuilderTests
 {
     // A path that need not exist: the builder only parses it, never touches disk.
-    private const string RepoRoot = @"C:\repo";
+    private const string RepositoryRoot = @"C:\repo";
 
-    private static IgnoredFolderNode Build(params IgnoredFileEntry[] entries) =>
-        IgnoredTreeBuilder.Build(RepoRoot, entries);
+    private static IgnoredFolderNode Build(params IgnoredFileEntry[] entries)
+        => IgnoredTreeBuilder.Build(RepositoryRoot, entries);
 
-    private static IgnoredFolderNode Sub(IgnoredFolderNode folder, string name) =>
-        folder.Subfolders.Single(f => f.Name == name);
+    private static IgnoredFolderNode Subfolder(IgnoredFolderNode folder, string name)
+        => folder.Subfolders.Single(f => f.Name == name);
 
     [Fact]
-    public void Empty_input_yields_an_empty_root_named_after_the_repo()
+    public void Empty_input_yields_an_empty_root_named_after_the_repository()
     {
-        var root = Build();
+        IgnoredFolderNode root = Build();
 
         Assert.Equal("repo", root.Name);
         Assert.Equal(string.Empty, root.RelativePath);
-        Assert.Equal(RepoRoot, root.FullPath);
+        Assert.Equal(RepositoryRoot, root.FullPath);
         Assert.Empty(root.Files);
         Assert.Empty(root.Subfolders);
         Assert.Equal(0, root.TotalSize);
@@ -31,9 +31,9 @@ public sealed class IgnoredTreeBuilderTests
     [Fact]
     public void A_root_level_file_lands_directly_under_the_root()
     {
-        var root = Build(new IgnoredFileEntry("app.log", 100));
+        IgnoredFolderNode root = Build(new IgnoredFileEntry("app.log", 100));
 
-        var file = Assert.Single(root.Files);
+        IgnoredFileNode file = Assert.Single(root.Files);
         Assert.Equal("app.log", file.Name);
         Assert.Equal("app.log", file.RelativePath);
         Assert.Equal(@"C:\repo\app.log", file.FullPath);
@@ -45,18 +45,18 @@ public sealed class IgnoredTreeBuilderTests
     [Fact]
     public void Nested_paths_create_intermediate_folders_with_correct_paths()
     {
-        var root = Build(new IgnoredFileEntry("build/sub/deep.bin", 42));
+        IgnoredFolderNode root = Build(new IgnoredFileEntry("build/sub/deep.bin", 42));
 
-        var build = Assert.Single(root.Subfolders);
+        IgnoredFolderNode build = Assert.Single(root.Subfolders);
         Assert.Equal("build", build.Name);
         Assert.Equal("build", build.RelativePath);
         Assert.Equal(@"C:\repo\build", build.FullPath);
 
-        var sub = Assert.Single(build.Subfolders);
-        Assert.Equal("sub", sub.Name);
-        Assert.Equal("build/sub", sub.RelativePath);
+        IgnoredFolderNode subfolder = Assert.Single(build.Subfolders);
+        Assert.Equal("sub", subfolder.Name);
+        Assert.Equal("build/sub", subfolder.RelativePath);
 
-        var file = Assert.Single(sub.Files);
+        IgnoredFileNode file = Assert.Single(subfolder.Files);
         Assert.Equal("deep.bin", file.Name);
         Assert.Equal(@"C:\repo\build\sub\deep.bin", file.FullPath);
     }
@@ -64,7 +64,7 @@ public sealed class IgnoredTreeBuilderTests
     [Fact]
     public void Sizes_and_counts_aggregate_up_every_level()
     {
-        var root = Build(
+        IgnoredFolderNode root = Build(
             new IgnoredFileEntry("a.log", 10),
             new IgnoredFileEntry("build/one.bin", 100),
             new IgnoredFileEntry("build/two.bin", 200),
@@ -73,32 +73,32 @@ public sealed class IgnoredTreeBuilderTests
         Assert.Equal(1310, root.TotalSize);
         Assert.Equal(4, root.TotalFileCount);
 
-        var build = Sub(root, "build");
+        IgnoredFolderNode build = Subfolder(root, "build");
         Assert.Equal(1300, build.TotalSize);
         Assert.Equal(3, build.TotalFileCount);
 
-        var sub = Sub(build, "sub");
-        Assert.Equal(1000, sub.TotalSize);
-        Assert.Equal(1, sub.TotalFileCount);
+        IgnoredFolderNode subfolder = Subfolder(build, "sub");
+        Assert.Equal(1000, subfolder.TotalSize);
+        Assert.Equal(1, subfolder.TotalFileCount);
     }
 
     [Fact]
     public void Multiple_files_in_one_folder_are_grouped()
     {
-        var root = Build(
-            new IgnoredFileEntry("bin/a.dll", 1),
-            new IgnoredFileEntry("bin/b.dll", 2),
-            new IgnoredFileEntry("bin/c.dll", 3));
+        IgnoredFolderNode root = Build(
+            new IgnoredFileEntry("binFolder/a.dll", 1),
+            new IgnoredFileEntry("binFolder/b.dll", 2),
+            new IgnoredFileEntry("binFolder/c.dll", 3));
 
-        var bin = Assert.Single(root.Subfolders);
-        Assert.Equal(3, bin.Files.Count);
-        Assert.Equal(6, bin.TotalSize);
+        IgnoredFolderNode binFolder = Assert.Single(root.Subfolders);
+        Assert.Equal(3, binFolder.Files.Count);
+        Assert.Equal(6, binFolder.TotalSize);
     }
 
     [Fact]
     public void Subfolders_and_files_are_sorted_by_name()
     {
-        var root = Build(
+        IgnoredFolderNode root = Build(
             new IgnoredFileEntry("zebra/z.txt", 1),
             new IgnoredFileEntry("alpha/a.txt", 1),
             new IgnoredFileEntry("m2.txt", 1),
@@ -111,12 +111,12 @@ public sealed class IgnoredTreeBuilderTests
     [Fact]
     public void A_fully_ignored_directory_becomes_a_leaf_carrying_its_own_size()
     {
-        var root = IgnoredTreeBuilder.Build(
-            RepoRoot,
+        IgnoredFolderNode root = IgnoredTreeBuilder.Build(
+            RepositoryRoot,
             files: [new IgnoredFileEntry("app.log", 10)],
             fullyIgnoredDirectories: [new IgnoredDirectoryEntry("node_modules", 5000, 42)]);
 
-        var nodeModules = Sub(root, "node_modules");
+        IgnoredFolderNode nodeModules = Subfolder(root, "node_modules");
         Assert.True(nodeModules.IsFullyIgnored);
         Assert.Empty(nodeModules.Subfolders);
         Assert.Empty(nodeModules.Files);
@@ -131,16 +131,16 @@ public sealed class IgnoredTreeBuilderTests
     [Fact]
     public void A_nested_fully_ignored_directory_creates_ordinary_intermediate_folders()
     {
-        var root = IgnoredTreeBuilder.Build(
-            RepoRoot,
+        IgnoredFolderNode root = IgnoredTreeBuilder.Build(
+            RepositoryRoot,
             files: [],
             fullyIgnoredDirectories: [new IgnoredDirectoryEntry("tools/node_modules", 200, 3)]);
 
-        var tools = Assert.Single(root.Subfolders);
+        IgnoredFolderNode tools = Assert.Single(root.Subfolders);
         Assert.False(tools.IsFullyIgnored);
         Assert.Equal(3, tools.TotalFileCount);
 
-        var nodeModules = Assert.Single(tools.Subfolders);
+        IgnoredFolderNode nodeModules = Assert.Single(tools.Subfolders);
         Assert.True(nodeModules.IsFullyIgnored);
         Assert.Equal(200, nodeModules.TotalSize);
     }
@@ -148,11 +148,11 @@ public sealed class IgnoredTreeBuilderTests
     [Fact]
     public void Folder_names_differing_only_by_case_merge_into_one_folder()
     {
-        var root = Build(
+        IgnoredFolderNode root = Build(
             new IgnoredFileEntry("Build/a.bin", 5),
             new IgnoredFileEntry("build/b.bin", 7));
 
-        var build = Assert.Single(root.Subfolders);
+        IgnoredFolderNode build = Assert.Single(root.Subfolders);
         Assert.Equal(2, build.Files.Count);
         Assert.Equal(12, build.TotalSize);
     }

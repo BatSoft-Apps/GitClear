@@ -6,42 +6,72 @@ namespace GitClear.App.ViewModels;
 /// <summary>
 /// Running total of the currently-checked files (UI-3). Files report size deltas
 /// as they are toggled, so the total is maintained in O(1) per toggle rather
-/// than rescanning the whole tree.
+/// than rescanning the whole tree. Only the tree's own view models (same
+/// namespace) may move the totals, and never below zero, so no caller can
+/// corrupt them.
 /// </summary>
-public sealed partial class SelectionTracker : ObservableObject
+public sealed class SelectionTracker : ObservableObject
 {
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(FormattedSelectedSize))]
-    [NotifyPropertyChangedFor(nameof(Summary))]
-    [NotifyPropertyChangedFor(nameof(HasSelection))]
     private long _selectedSize;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(Summary))]
-    [NotifyPropertyChangedFor(nameof(HasSelection))]
     private int _selectedFileCount;
+
+    public long SelectedSize
+    {
+        get => _selectedSize;
+        private set
+        {
+            if (SetProperty(ref _selectedSize, value))
+            {
+                OnPropertyChanged(nameof(FormattedSelectedSize));
+                OnPropertyChanged(nameof(Summary));
+                OnPropertyChanged(nameof(HasSelection));
+            }
+        }
+    }
+
+    public int SelectedFileCount
+    {
+        get => _selectedFileCount;
+        private set
+        {
+            if (SetProperty(ref _selectedFileCount, value))
+            {
+                OnPropertyChanged(nameof(Summary));
+                OnPropertyChanged(nameof(HasSelection));
+            }
+        }
+    }
 
     public string FormattedSelectedSize => ByteSize.Format(SelectedSize);
 
     public bool HasSelection => SelectedFileCount > 0;
 
-    public string Summary => SelectedFileCount == 0
-        ? "Nothing selected."
-        : $"Selected for deletion: {SelectedFileCount:N0} {(SelectedFileCount == 1 ? "file" : "files")} · {FormattedSelectedSize}";
+    public string Summary
+        => SelectedFileCount == 0
+            ? UserMessages.NothingSelected
+            : UserMessages.SelectionSummary(SelectedFileCount, FormattedSelectedSize);
 
-    public void Add(long size, int fileCount)
+    internal void Add(long size, int fileCount)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(size);
+        ArgumentOutOfRangeException.ThrowIfNegative(fileCount);
+
         SelectedSize += size;
         SelectedFileCount += fileCount;
     }
 
-    public void Remove(long size, int fileCount)
+    internal void Remove(long size, int fileCount)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(size);
+        ArgumentOutOfRangeException.ThrowIfNegative(fileCount);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(size, SelectedSize);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(fileCount, SelectedFileCount);
+
         SelectedSize -= size;
         SelectedFileCount -= fileCount;
     }
 
-    public void Reset()
+    internal void Reset()
     {
         SelectedSize = 0;
         SelectedFileCount = 0;

@@ -18,6 +18,10 @@ public sealed class FileNodeViewModel : SelectableNodeViewModel
     public FileNodeViewModel(IgnoredFileNode model, FolderNodeViewModel parent, SelectionTracker tracker)
         : base(parent)
     {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(parent);
+        ArgumentNullException.ThrowIfNull(tracker);
+
         _model = model;
         _tracker = tracker;
     }

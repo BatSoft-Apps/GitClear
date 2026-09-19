@@ -12,17 +12,7 @@ public sealed class UserGuideService : IUserGuideService
 {
     private const string GuideFolderName = "Documentation";
 
-    private readonly string _guideFolder;
-
-    public UserGuideService()
-        : this(Path.Combine(AppContext.BaseDirectory, GuideFolderName))
-    {
-    }
-
-    internal UserGuideService(string guideFolder)
-    {
-        _guideFolder = guideFolder;
-    }
+    private readonly string _guideFolder = Path.Combine(AppContext.BaseDirectory, GuideFolderName);
 
     public bool TryOpen()
     {

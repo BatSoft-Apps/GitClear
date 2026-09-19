@@ -11,7 +11,7 @@ public sealed class FolderPickerService : IFolderPickerService
 {
     public string? PickFolder(string? initialFolder = null)
     {
-        var dialog = new OpenFolderDialog
+        OpenFolderDialog dialog = new()
         {
             Title = "Select a folder to scan for Git repositories",
             Multiselect = false,

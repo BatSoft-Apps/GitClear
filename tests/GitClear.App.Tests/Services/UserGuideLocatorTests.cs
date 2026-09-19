@@ -15,8 +15,8 @@ public sealed class UserGuideLocatorTests
         "USER-GUIDE.de.pdf",
     ];
 
-    private static string? Select(string[] files, string culture) =>
-        UserGuideLocator.SelectForCulture(files, new CultureInfo(culture));
+    private static string? Select(string[] files, string culture)
+        => UserGuideLocator.SelectForCulture(files, new CultureInfo(culture));
 
     [Fact]
     public void Prefers_an_exact_culture_match()

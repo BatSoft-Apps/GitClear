@@ -7,7 +7,13 @@ namespace GitClear.App.Services;
 /// </summary>
 public sealed class MessageBoxConfirmationDialog : IConfirmationDialog
 {
-    public bool Confirm(string title, string message) =>
-        MessageBox.Show(message, title, MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel)
-            == MessageBoxResult.OK;
+    public bool Confirm(string title, string message)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(message);
+
+        MessageBoxResult answer = MessageBox.Show(
+            message, title, MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        return answer == MessageBoxResult.OK;
+    }
 }

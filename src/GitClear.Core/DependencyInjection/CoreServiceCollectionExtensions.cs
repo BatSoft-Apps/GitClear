@@ -18,6 +18,8 @@ public static class CoreServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddGitClearCore(this IServiceCollection services)
     {
+        ArgumentNullException.ThrowIfNull(services);
+
         services.AddSingleton<IRepositoryDiscoveryService, RepositoryDiscoveryService>();
         services.AddSingleton<IGitClient, GitCommandLineClient>();
         services.AddSingleton<IIgnoredFileScanner, GitIgnoredFileScanner>();

@@ -11,13 +11,15 @@ public static class ByteSize
 
     public static string Format(long bytes)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(bytes);
+
         if (bytes < 1024)
         {
             return $"{bytes} {(bytes == 1 ? "byte" : "bytes")}";
         }
 
         double size = bytes;
-        var unit = 0;
+        int unit = 0;
         while (size >= 1024 && unit < Units.Length - 1)
         {
             size /= 1024;

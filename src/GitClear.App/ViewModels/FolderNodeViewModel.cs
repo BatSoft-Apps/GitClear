@@ -19,6 +19,12 @@ public sealed partial class FolderNodeViewModel : SelectableNodeViewModel
     private readonly SelectionTracker _tracker;
     private readonly IReadOnlyList<SelectableNodeViewModel> _checkableChildren;
 
+    [ObservableProperty]
+    private bool _isExpanded;
+
+    [ObservableProperty]
+    private bool _isSelected;
+
     public FolderNodeViewModel(IgnoredFolderNode model, SelectionTracker tracker)
         : this(model, parent: null, tracker)
     {
@@ -27,10 +33,13 @@ public sealed partial class FolderNodeViewModel : SelectableNodeViewModel
     private FolderNodeViewModel(IgnoredFolderNode model, FolderNodeViewModel? parent, SelectionTracker tracker)
         : base(parent)
     {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(tracker);
+
         _model = model;
         _tracker = tracker;
-        Subfolders = model.Subfolders.Select(f => new FolderNodeViewModel(f, this, tracker)).ToList();
-        Files = model.Files.Select(f => new FileNodeViewModel(f, this, tracker)).ToList();
+        Subfolders = [.. model.Subfolders.Select(subfolder => new FolderNodeViewModel(subfolder, this, tracker))];
+        Files = [.. model.Files.Select(file => new FileNodeViewModel(file, this, tracker))];
         _checkableChildren = [.. Subfolders, .. Files];
     }
 
@@ -52,6 +61,39 @@ public sealed partial class FolderNodeViewModel : SelectableNodeViewModel
 
     protected override IReadOnlyList<SelectableNodeViewModel> CheckableChildren => _checkableChildren;
 
+    /// <summary>
+    /// Paths to recycle for the current selection: each checked wholly-ignored
+    /// directory as a single unit, plus each individually-checked file (DEL-1).
+    /// </summary>
+    public IEnumerable<string> EnumerateDeletionTargets()
+    {
+        if (IsFullyIgnored)
+        {
+            if (IsChecked == true)
+            {
+                yield return FullPath;
+            }
+
+            yield break;
+        }
+
+        foreach (FileNodeViewModel file in Files)
+        {
+            if (file.IsChecked == true)
+            {
+                yield return file.FullPath;
+            }
+        }
+
+        foreach (FolderNodeViewModel subfolder in Subfolders)
+        {
+            foreach (string target in subfolder.EnumerateDeletionTargets())
+            {
+                yield return target;
+            }
+        }
+    }
+
     protected override void OnCheckedChanged()
     {
         // A wholly-ignored directory is a selection leaf: it contributes its
@@ -69,45 +111,6 @@ public sealed partial class FolderNodeViewModel : SelectableNodeViewModel
         else
         {
             _tracker.Remove(_model.TotalSize, _model.TotalFileCount);
-        }
-    }
-
-    [ObservableProperty]
-    private bool _isExpanded;
-
-    [ObservableProperty]
-    private bool _isSelected;
-
-    /// <summary>
-    /// Paths to recycle for the current selection: each checked wholly-ignored
-    /// directory as a single unit, plus each individually-checked file (DEL-1).
-    /// </summary>
-    public IEnumerable<string> EnumerateDeletionTargets()
-    {
-        if (IsFullyIgnored)
-        {
-            if (IsChecked == true)
-            {
-                yield return FullPath;
-            }
-
-            yield break;
-        }
-
-        foreach (var file in Files)
-        {
-            if (file.IsChecked == true)
-            {
-                yield return file.FullPath;
-            }
-        }
-
-        foreach (var subfolder in Subfolders)
-        {
-            foreach (var target in subfolder.EnumerateDeletionTargets())
-            {
-                yield return target;
-            }
         }
     }
 }
